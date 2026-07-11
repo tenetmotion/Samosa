@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile backend
+        run: python -m py_compile backend/service.py
+      - name: Run source contracts
+        run: python -m unittest discover -s tests -v
+      - name: Validate release archive
+        shell: powershell
+        run: .\scripts\package-release.ps1 -Version 0.0.0-ci

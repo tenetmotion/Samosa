@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Samosa</title>
+  <link rel="stylesheet" href="css/panel.css">
+  <link rel="stylesheet" href="css/viewer-scale.css">
+</head>
+<body>
+  <main id="app">
+    <header class="app-header">
+      <div class="brand"><img src="assets/samosa_logo.svg" alt="Samosa"><small id="clipName">No layer loaded</small></div>
+      <button id="loadSelection" class="primary">Load selection</button>
+    </header>
+
+    <nav class="modes" aria-label="Workflow mode">
+      <button class="mode active" data-mode="object">Object</button>
+      <button class="mode" data-mode="matting">Matting</button>
+      <button class="mode" data-mode="remove">Remove</button>
+      <button class="mode" data-mode="output">Output</button>
+    </nav>
+
+    <section class="viewer-shell">
+      <div id="viewerEmpty" class="viewer-empty"><div><span>No footage</span><p>Select a file-backed footage layer, then load it.</p></div></div>
+      <canvas id="viewer" width="640" height="360" aria-label="Interactive footage viewer"></canvas>
+      <button id="viewerScale" class="viewer-scale" title="Change viewer size" aria-label="Change viewer size">100%</button>
+      <div class="viewer-badge" id="viewerBadge">SOURCE</div>
+    </section>
+
+    <section class="timeline">
+      <button id="prevFrame" class="icon" title="Previous frame" aria-label="Previous frame">&#9664;</button>
+      <input id="frameSlider" type="range" min="0" max="0" value="0">
+      <button id="nextFrame" class="icon" title="Next frame" aria-label="Next frame">&#9654;</button>
+      <output id="frameReadout">0 / 0</output>
+    </section>
+
+    <section id="objectPanel" class="mode-panel active">
+      <div class="toolbar">
+        <label>Object <select id="objectId"><option value="0">Object 1</option></select></label>
+        <button id="addObject" title="Add object">+</button>
+        <div class="point-tools" role="group" aria-label="Point type">
+          <button id="positiveTool" class="selected"><span class="dot positive"></span> Include</button>
+          <button id="negativeTool"><span class="dot negative"></span> Exclude</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="undoPoint">Undo point</button>
+        <button id="clearPoints">Clear points</button>
+        <button id="propagate" class="primary grow">Track objects</button>
+      </div>
+      <div class="tracking-row">
+        <span id="trackingStatus">Not tracked</span>
+        <button id="clearTracking">Clear tracking</button>
+      </div>
+      <div class="actions">
+        <label class="inline-label">Dedupe threshold <input id="dedupeThreshold" type="number" min="0" max="1" step="0.01" value="0.8"></label>
+        <button id="deduplicate">Deduplicate masks</button>
+      </div>
+      <details open>
+        <summary><span>Segmentation</span><i aria-hidden="true">&#9662;</i></summary>
+        <div class="form-grid">
+          <label>Model<select id="samModel"><option value="Base">SAM2 Base</option><option value="Large">SAM2 Large</option><option value="Efficient">EfficientTAM</option></select></label>
+          <label>Grow<input id="grow" type="number" min="-20" max="20" value="0"></label>
+          <label>Remove holes<input id="holes" type="number" min="0" max="100000" value="0"></label>
+          <label>Remove dots<input id="dots" type="number" min="0" max="100000" value="0"></label>
+          <label>Border fix<input id="borderFix" type="number" min="0" max="10" value="0"></label>
+          <label class="check"><input id="showMasks" type="checkbox" checked> Show masks</label>
+          <label class="check"><input id="showOutlines" type="checkbox" checked> Show outlines</label>
+          <label class="check"><input id="antialias" type="checkbox"> Antialias</label>
+        </div>
+      </details>
+      <div id="pointList" class="point-list"></div>
+    </section>
+
+    <section id="mattingPanel" class="mode-panel">
+      <div class="form-grid">
+        <label>Model<select id="mattingModel"><option>MatAnyone2</option><option>MatAnyone</option><option>VideoMaMa</option></select></label>
+        <label>Resolution<select id="mattingResolution"><option>480</option><option selected>720</option><option>1080</option></select></label>
+        <label>Batch size<input id="mattingChunk" type="number" min="4" max="64" value="16"></label>
+        <label>Overlap<input id="mattingOverlap" type="number" min="0" max="16" value="2"></label>
+        <label>Grow<input id="mattingGrow" type="number" min="-20" max="20" value="0"></label>
+        <label>Gamma<input id="mattingGamma" type="number" min="0.1" max="4" step="0.1" value="1"></label>
+        <label class="check span"><input id="combineObjects" type="checkbox"> Combine all objects</label>
+      </div>
+      <div class="preview-switch"><button data-view="matting-alpha" class="active">Alpha</button><button data-view="matting-matte">Matte</button></div>
+      <button id="runMatting" class="primary wide">Run matting</button>
+    </section>
+
+    <section id="removePanel" class="mode-panel">
+      <div class="form-grid">
+        <label>Method<select id="removalMethod"><option>MiniMax-Remover</option><option>OpenCV</option></select></label>
+        <label>Mask grow<input id="inpaintGrow" type="number" min="-20" max="40" value="5"></label>
+        <label class="opencv-field">Algorithm<select id="opencvMethod"><option>Telea</option><option>Navier-Stokes</option></select></label>
+        <label class="opencv-field">Radius<input id="opencvRadius" type="number" min="1" max="10" value="3"></label>
+        <label class="minimax-field">Resolution<select id="minimaxResolution"><option>352</option><option selected>480</option><option>720</option><option>1080</option></select></label>
+        <label class="minimax-field">Steps<input id="minimaxSteps" type="number" min="4" max="12" value="6"></label>
+        <label class="check span minimax-field"><input id="vaeTiling" type="checkbox"> VAE tiling</label>
+      </div>
+      <button id="runRemoval" class="primary wide">Remove objects</button>
+    </section>
+
+    <section id="outputPanel" class="mode-panel">
+      <div class="form-grid">
+        <label>Output<select id="outputType"><option>Segmentation-Alpha</option><option>Segmentation-Matte</option><option>Segmentation-BGcolor</option><option>Matting-Alpha</option><option>Matting-Matte</option><option>Matting-BGcolor</option><option>ObjectRemoval</option></select></label>
+        <label>Format<select id="outputFormat"><option value="png">PNG sequence</option><option value="exr">EXR sequence</option><option value="prores">ProRes</option><option value="ffv1">FFV1</option><option value="vp9">VP9</option><option value="x264">H.264</option><option value="x265">H.265</option></select></label>
+        <label>Object<select id="exportObject"><option value="-1">All objects</option></select></label>
+        <label>Quality<input id="quality" type="number" min="0" max="63" value="14"></label>
+        <label class="span">Name<input id="outputName" type="text" value="" placeholder="Source file name"></label>
+        <label class="span">Location
+          <span class="path-selector">
+            <input id="outputDestination" type="text" readonly placeholder="Default export folder">
+            <button id="chooseExportDestination" type="button">Choose folder</button>
+            <button id="clearExportDestination" type="button">Use default</button>
+          </span>
+        </label>
+      </div>
+      <button id="exportImport" class="primary wide">Export and add to comp</button>
+      <button id="revealOutput" class="wide">Reveal latest output</button>
+    </section>
+
+    <section id="jobBar" class="job-bar hidden">
+      <div class="job-bar-header">
+        <strong id="jobLabel">Processing</strong>
+        <div class="job-bar-actions">
+          <span id="jobPercent">0%</span>
+          <button id="cancelJob">Cancel</button>
+        </div>
+      </div>
+      <progress id="jobProgress" max="100" value="0"></progress>
+    </section>
+
+    <footer><span id="serviceLight" class="status-light"></span><span id="status">Starting service...</span></footer>
+  </main>
+  <script src="js/CSInterface.js"></script>
+  <script>
+    window.onerror = function (message, source, line) {
+      var status = document.getElementById("status");
+      var light = document.getElementById("serviceLight");
+      if (status) status.textContent = "Panel error: " + message + " (line " + line + ")";
+      if (light) light.className = "status-light error";
+    };
+  </script>
+  <script src="js/panel.js"></script>
+</body>
+</html>

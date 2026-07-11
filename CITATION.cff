@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use Samosa, cite this software and the upstream models used by your workflow."
+title: "Samosa"
+type: software
+version: 1.0.0
+date-released: 2026-07-10
+license: GPL-3.0-only
+repository-code: "https://github.com/tenetmotion/Samosa"
+url: "https://github.com/tenetmotion/Samosa"
+abstract: "An open-source After Effects rotoscoping panel backed by a separately installed Sammie-Roto-2 runtime."
+authors:
+  - name: "Samosa contributors"
