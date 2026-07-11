@@ -6,6 +6,7 @@
   if (!nodeRequire) throw new Error("CEP Node integration is unavailable");
   var fs = nodeRequire("fs");
   var path = nodeRequire("path");
+  var os = nodeRequire("os");
   var child = nodeRequire("child_process");
   var http = nodeRequire("http");
   function normalizeCepPath(value) {
@@ -16,11 +17,15 @@
   }
   var extensionPath = normalizeCepPath(cs.getSystemPath(SystemPath.EXTENSION));
   var configPath = path.join(extensionPath, "config.json");
-  if (!fs.existsSync(configPath)) throw new Error("Samosa is not configured. Run install.ps1 first.");
+  if (!fs.existsSync(configPath)) throw new Error("Samosa is not configured. Run the Samosa installer first.");
   var configText = fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "");
   var config = JSON.parse(configText);
   var baseUrl = "http://127.0.0.1:" + config.port;
-  var runtimeLog = path.join(process.env.APPDATA, "Samosa", "panel-runtime.log");
+  var runtimeLogDir = process.platform === "darwin"
+    ? path.join(os.homedir(), "Library", "Logs", "Samosa")
+    : path.join(process.env.APPDATA || os.homedir(), "Samosa");
+  try { if (!fs.existsSync(runtimeLogDir)) fs.mkdirSync(runtimeLogDir, { recursive: true }); } catch (e) {}
+  var runtimeLog = path.join(runtimeLogDir, "panel-runtime.log");
   var state = null;
   var frame = 0;
   var positive = true;
@@ -152,16 +157,17 @@
     try {
       var health = await api("GET", "/health");
       log("Service already running on " + health.device);
-      setStatus("GPU service connected");
+      setStatus("Processing service connected");
       return;
     } catch (e) { log("Initial health check failed: " + e.message); }
-    setStatus("Starting GPU service...", "");
+    setStatus("Starting processing service...", "");
     var script = path.join(extensionPath, "backend", "service.py");
-    var logDir = path.join(process.env.APPDATA, "Samosa");
+    var logDir = runtimeLogDir;
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     var out = fs.openSync(path.join(logDir, "service.log"), "a");
+    var spawnEnv = Object.assign({}, process.env, config.environment || {});
     var proc = child.spawn(config.python, [script, "--repo", config.repo, "--port", String(config.port)], {
-      cwd: config.repo, detached: true, windowsHide: true, stdio: ["ignore", out, out]
+      cwd: config.repo, detached: true, windowsHide: true, stdio: ["ignore", out, out], env: spawnEnv
     });
     proc.on("error", function (error) { log("Service spawn error: " + error.message); });
     proc.unref();
@@ -170,11 +176,11 @@
       try {
         await api("GET", "/health");
         log("Spawned service is healthy");
-        setStatus("GPU service connected");
+        setStatus("Processing service connected");
         return;
       } catch (e2) {}
     }
-    throw new Error("Service did not start. Check %APPDATA%\\Samosa\\service.log");
+    throw new Error("Service did not start. Check " + path.join(logDir, "service.log"));
   }
 
   async function loadHostScript() {
@@ -397,7 +403,11 @@
     el("chooseExportDestination").onclick = chooseExportDestination;
     el("clearExportDestination").onclick = function () { setExportDestination(""); setStatus("Using default export folder"); };
     el("cancelJob").onclick = function () { if (activeJob) api("POST", "/api/job/cancel", { id: activeJob.id }); };
-    el("revealOutput").onclick = function () { if (latestOutput) child.spawn("explorer.exe", ["/select,", latestOutput.path], { detached: true }); };
+    el("revealOutput").onclick = function () {
+      if (!latestOutput) return;
+      if (process.platform === "darwin") child.spawn("open", ["-R", latestOutput.path], { detached: true });
+      else child.spawn("explorer.exe", ["/select,", latestOutput.path], { detached: true });
+    };
     el("removalMethod").onchange = updateRemovalFields;
     el("outputType").onchange = function () { if (currentMode === "output") { currentView = outputView(); refreshFrame(); } };
     el("objectId").onchange = refreshFrame;

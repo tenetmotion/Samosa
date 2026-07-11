@@ -15,7 +15,7 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(root.find(".//Type").text, "Panel")
         self.assertEqual(root.attrib["ExtensionBundleId"], "com.tenet.samosa.roto")
         self.assertEqual(root.attrib["ExtensionBundleName"], "Samosa")
-        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.1.0")
+        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.2.0")
         params = [node.text for node in root.findall(".//Parameter")]
         self.assertIn("--enable-nodejs", params)
 

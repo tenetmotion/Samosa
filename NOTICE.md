@@ -10,7 +10,7 @@ Samosa is an independent After Effects integration built to interoperate with Sa
 - License: GNU General Public License version 3
 - Development revision: `129a0a54950d71b535cdcdbd06090c5583e293d9`
 
-Samosa does not include a copy of the Sammie-Roto-2 source tree or model weights. Users install that runtime separately. The Samosa bridge imports Sammie-Roto-2 modules at runtime and adapts its desktop processing pipeline for a headless local service.
+Samosa release packages do not embed the Sammie-Roto-2 source tree or model weights. The online installers download the pinned revision above and selected model files from their upstream locations, verify them, and assemble a local runtime. Source-based users can provide a separate checkout. The Samosa bridge imports Sammie-Roto-2 modules at runtime and adapts its desktop processing pipeline for a headless local service.
 
 The name Samosa identifies this integration project and must not be used to imply endorsement by the Sammie-Roto-2 maintainers.
 

@@ -2,19 +2,19 @@
 
 [![CI](https://github.com/tenetmotion/Samosa/actions/workflows/ci.yml/badge.svg)](https://github.com/tenetmotion/Samosa/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4.svg)](docs/INSTALL.md)
+[![Platforms: Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555.svg)](docs/INSTALL.md)
 
-Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a separately installed [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
+Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a local [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
 
 Samosa is an independent integration project. It is not an official Sammie-Roto-2 project and is not affiliated with or endorsed by Adobe.
 
 ![Samosa panel](docs/images/samosa-panel.png)
 
-**Documentation:** [Complete installation](docs/INSTALL.md) | [Model installation](docs/MODELS.md) | [After Effects tutorial](docs/AFTER_EFFECTS_TUTORIAL.md) | [Development](docs/DEVELOPMENT.md) | [Third-party licenses](THIRD_PARTY_NOTICES.md)
+**Documentation:** [Windows installation](docs/INSTALL.md) | [macOS installation](docs/INSTALL_MACOS.md) | [Model installation](docs/MODELS.md) | [After Effects tutorial](docs/AFTER_EFFECTS_TUTORIAL.md) | [Development](docs/DEVELOPMENT.md) | [Third-party licenses](THIRD_PARTY_NOTICES.md)
 
 ## Status
 
-The current release targets Windows and After Effects 2021 or newer through CEP. macOS is not supported in v1.0.0 and is planned after the Windows launch. The selector is embedded in the docked panel. A future native Custom Comp UI module can route clicks from the Composition viewer to the same local service API.
+The current release targets Windows and macOS with After Effects 2021 or newer through CEP. The selector is embedded in the docked panel. A future native Custom Comp UI module can route clicks from the Composition viewer to the same local service API.
 
 ## Features
 
@@ -29,16 +29,22 @@ The current release targets Windows and After Effects 2021 or newer through CEP.
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10/11, or macOS 13 or newer
 - Adobe After Effects 2021 or newer
-- A working local Sammie-Roto-2 checkout and its Python environment
-- A GPU/runtime supported by the selected Sammie-Roto-2 installation
+- Internet access during runtime and model installation
+- Windows: a supported NVIDIA, Intel, or CPU backend
+- macOS: Apple Silicon MPS acceleration or Intel CPU processing
 
-Samosa does not bundle Sammie-Roto-2, model weights, Python, FFmpeg, or Adobe SDK files.
+Samosa installers do not embed model weights or Adobe SDK files. They download a pinned Sammie-Roto-2 source revision, Python runtime, and selected checkpoints during installation or first use.
 
 ## Install
 
-Download `Samosa-Setup-1.1.0.exe` from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest) and run it. The per-user installer downloads a pinned Sammie-Roto-2 runtime, creates its isolated Python environment, installs the CEP panel, and configures After Effects under one Samosa installation root.
+Download the installer for your platform from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest):
+
+- Windows: `Samosa-Setup-1.2.0.exe`
+- macOS: `Samosa-1.2.0-macOS.pkg`
+
+Both installers create a local runtime and configure the After Effects CEP panel. See [Windows installation](docs/INSTALL.md) or [macOS installation](docs/INSTALL_MACOS.md).
 
 Choose one model mode:
 
@@ -48,7 +54,7 @@ Choose one model mode:
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
-For installer modes, source-based setup, updating, uninstalling, and troubleshooting, follow the [complete installation guide](docs/INSTALL.md). See [Model installation](docs/MODELS.md) for exactly what happens when Standard mode encounters a missing model.
+See [Model installation](docs/MODELS.md) for exactly what happens when Standard mode encounters a missing model.
 
 ## Quick tutorial
 

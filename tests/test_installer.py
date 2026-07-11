@@ -1,4 +1,6 @@
 import json
+import platform
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -7,10 +9,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "installer" / "bootstrap.ps1"
+MAC_BOOTSTRAP = ROOT / "installer" / "macos" / "bootstrap.sh"
 
 
 class InstallerContractTests(unittest.TestCase):
     def dry_run(self, *arguments, expect_success=True):
+        if not shutil.which("powershell"):
+            self.skipTest("Windows PowerShell installer plan runs on the Windows workflow")
         with tempfile.TemporaryDirectory(prefix="samosa-installer-plan-") as install_root:
             command = [
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -74,6 +79,39 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("confirmRestrictedModel", panel)
         self.assertIn("activeJob.message || label", panel)
         self.assertIn('job.message = "Downloading %s"', service)
+
+    def test_macos_installer_is_cross_architecture_and_uses_user_runtime(self):
+        bootstrap = MAC_BOOTSTRAP.read_text(encoding="utf-8")
+        builder = (ROOT / "scripts" / "build-macos-installer.sh").read_text(encoding="utf-8")
+        postinstall = (ROOT / "installer" / "macos" / "pkg-scripts" / "postinstall").read_text(encoding="utf-8")
+        panel = (ROOT / "panel" / "js" / "panel.js").read_text(encoding="utf-8")
+        self.assertIn("Library/Application Support/Samosa", bootstrap)
+        self.assertIn("--extra cpu", bootstrap)
+        self.assertIn('"PYTORCH_ENABLE_MPS_FALLBACK": "1"', bootstrap)
+        self.assertIn('hostArchitectures="x86_64,arm64"', builder)
+        self.assertIn("launchctl asuser", postinstall)
+        self.assertIn('process.platform === "darwin"', panel)
+        self.assertIn('child.spawn("open", ["-R"', panel)
+        self.assertNotIn("${MODELS,,}", bootstrap)
+        self.assertNotIn("${choice^^}", (ROOT / "installer" / "macos" / "manage-models.sh").read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(platform.system() == "Darwin", "macOS bootstrap plan runs on the macOS workflow")
+    def test_macos_standard_and_complete_plans(self):
+        standard = subprocess.run(
+            ["/bin/bash", str(MAC_BOOTSTRAP), "--mode", "Standard", "--models", "Base", "--dry-run"],
+            text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(standard.returncode, 0, standard.stderr)
+        plan = json.loads(standard.stdout)
+        self.assertEqual(plan["platform"], "macos")
+        self.assertEqual(plan["backend"], "mps-or-cpu")
+        self.assertEqual(plan["models"], ["Base"])
+        rejected = subprocess.run(
+            ["/bin/bash", str(MAC_BOOTSTRAP), "--mode", "Complete", "--models", "all", "--dry-run"],
+            text=True, capture_output=True, timeout=30,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("explicit acceptance", rejected.stderr)
 
 
 if __name__ == "__main__":

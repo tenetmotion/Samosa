@@ -12,8 +12,14 @@
 ## Build the source archive
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.1.0
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.1.0
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.2.0
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.2.0
+```
+
+Run on macOS:
+
+```bash
+./scripts/build-macos-installer.sh 1.2.0
 ```
 
 The script validates the tree and writes a source directory and zip under `dist/`. Inspect both before publishing. GitHub source archives remain the canonical corresponding source for GPL releases.

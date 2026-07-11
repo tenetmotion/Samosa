@@ -48,4 +48,4 @@ See [Third-party notices](../THIRD_PARTY_NOTICES.md) for upstream links and deta
 - Rerun the Samosa EXE and choose Complete or Custom. Existing files with valid checksums are skipped.
 - Simply select the model in Samosa and run its tool to use the on-demand path.
 
-Model downloads require internet access. Partial files retain a `.part` extension and are removed after a failed checksum or transfer. Installation and download logs are stored under `%LOCALAPPDATA%\Programs\Samosa\logs`.
+Model downloads require internet access. Partial files retain a `.part` extension and are removed after a failed checksum or transfer. Logs are stored under `%LOCALAPPDATA%\Programs\Samosa\logs` on Windows and `~/Library/Application Support/Samosa/logs` on macOS.

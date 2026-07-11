@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-11
+
+- Added an unsigned macOS PKG for Apple Silicon and Intel Macs.
+- Added per-user macOS runtime installation, MPS/CPU selection, model management, and uninstall launchers.
+- Made CEP service logs, startup messages, and output reveal behavior platform-aware.
+- Added macOS package and pinned-runtime validation in GitHub Actions.
+
 ## [1.1.0] - 2026-07-11
 
 - Added a per-user Windows EXE that downloads a pinned Sammie-Roto-2 runtime into one Samosa installation root.

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.tenet.samosa.roto" ExtensionBundleVersion="1.1.0" ExtensionBundleName="Samosa">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.tenet.samosa.roto" ExtensionBundleVersion="1.2.0" ExtensionBundleName="Samosa">
   <ExtensionList>
-    <Extension Id="com.tenet.samosa.roto.panel" Version="1.1.0" />
+    <Extension Id="com.tenet.samosa.roto.panel" Version="1.2.0" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList><Host Name="AEFT" Version="[18.0,99.9]" /></HostList>

@@ -249,7 +249,7 @@ try {
     New-Item -ItemType Junction -Path $CepTarget -Target $CepRoot | Out-Null
 
     $InstallState = [ordered]@{
-        version = "1.1.0"
+        version = "1.2.0"
         installed_at = (Get-Date).ToUniversalTime().ToString("o")
         backend = $Backend
         install_mode = $InstallMode

@@ -2,7 +2,7 @@
 
 Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. The recommended online EXE installs the panel, downloads a pinned upstream runtime, and creates an isolated Python environment under one per-user installation root. The EXE does not embed third-party model weights.
 
-Samosa v1.1.0 is Windows-only. A macOS installer and runtime adaptation are planned after the Windows launch.
+This guide covers Windows. For Apple Silicon and Intel Macs, use the [macOS installation guide](INSTALL_MACOS.md).
 
 ## Requirements
 
@@ -14,10 +14,10 @@ Samosa v1.1.0 is Windows-only. A macOS installer and runtime adaptation are plan
 
 ## Recommended: install with the EXE
 
-Download `Samosa-Setup-1.1.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
+Download `Samosa-Setup-1.2.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.1.0.exe
+Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.2.0.exe
 ```
 
 The installer is per-user and does not require administrator access. Its default root is:

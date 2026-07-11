@@ -252,7 +252,7 @@ class Engine:
         return {
             "ok": True,
             "service": "samosa-ae",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "mock": self.mock,
             "repo": str(self.repo),
             "device": device,
@@ -740,7 +740,7 @@ class Engine:
 
 class Handler(BaseHTTPRequestHandler):
     engine = None
-    server_version = "SamosaAE/1.1"
+    server_version = "SamosaAE/1.2"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))

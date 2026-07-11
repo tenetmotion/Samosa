@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+TARGET_VOLUME="${3:-/}"
+RESOURCES="$TARGET_VOLUME/Applications/Samosa/Resources"
+CONSOLE_USER="$(stat -f '%Su' /dev/console)"
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" || "$CONSOLE_USER" == "_mbsetupuser" ]]; then
+  echo "Samosa requires an active logged-in user." >&2
+  exit 1
+fi
+CONSOLE_UID="$(id -u "$CONSOLE_USER")"
+CONSOLE_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | awk '{print $2}')"
+[[ -n "$CONSOLE_HOME" && -d "$CONSOLE_HOME" ]] || { echo "Could not determine the user's home folder." >&2; exit 1; }
+
+/bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
+  env HOME="$CONSOLE_HOME" USER="$CONSOLE_USER" LOGNAME="$CONSOLE_USER" \
+  /bin/bash "$RESOURCES/installer/macos/bootstrap.sh" \
+  --install-root "$CONSOLE_HOME/Library/Application Support/Samosa" \
+  --mode Standard --models Base
+
+exit 0

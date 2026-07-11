@@ -1,0 +1,61 @@
+name: macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version
+        required: true
+        default: 1.2.0
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate shell and source contracts
+        run: |
+          bash -n installer/macos/bootstrap.sh
+          bash -n installer/macos/manage-models.sh
+          bash -n installer/macos/pkg-scripts/postinstall
+          bash -n scripts/build-macos-installer.sh
+          python -m unittest discover -s tests -v
+      - name: Validate pinned macOS runtime resolution
+        run: |
+          work="$(mktemp -d)"
+          commit="129a0a54950d71b535cdcdbd06090c5583e293d9"
+          curl -fL --retry 3 -o "$work/sammie.zip" "https://github.com/Zarxrax/Sammie-Roto-2/archive/$commit.zip"
+          echo "71CFC39AC389DA6C138E956881DEA1A811F473F63052FB026B8E24CFE28AF62B  $work/sammie.zip" | shasum -a 256 -c -
+          ditto -x -k "$work/sammie.zip" "$work/source"
+          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$work/uv" sh
+          "$work/uv/uv" sync --extra cpu --dry-run --directory "$work/source/Sammie-Roto-2-$commit"
+      - name: Build and inspect package
+        run: |
+          version="${{ github.event.release.tag_name || inputs.version }}"
+          version="${version#v}"
+          bash ./scripts/build-macos-installer.sh "$version"
+          pkgutil --expand-full "dist/installer/Samosa-$version-macOS.pkg" dist/pkg-expanded
+          test -f "dist/pkg-expanded/Samosa-component.pkg/Payload/Applications/Samosa/Resources/panel/index.html"
+          test -f "dist/pkg-expanded/Samosa-component.pkg/Scripts/postinstall"
+          test -x "dist/pkg-expanded/Samosa-component.pkg/Payload/Applications/Samosa/Manage Model Packs.command"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Samosa-macOS-installer
+          path: |
+            dist/installer/*-macOS.pkg
+            dist/installer/*-macOS-SHA256.txt
+      - name: Attach installer to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/installer/*-macOS.pkg dist/installer/*-macOS-SHA256.txt --clobber

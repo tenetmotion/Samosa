@@ -6,6 +6,8 @@
 *.html text eol=lf
 *.md text eol=lf
 *.ps1 text eol=crlf
+*.sh text eol=lf
+installer/macos/pkg-scripts/* text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary
