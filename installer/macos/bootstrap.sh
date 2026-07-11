@@ -51,6 +51,7 @@ if [[ "$INSTALL_MODE" == "Standard" && -z "$MODELS" ]]; then MODELS="Base"; fi
 
 IFS=',' read -r -a MODEL_ARRAY <<< "$MODELS"
 declare -a CLEAN_MODELS=()
+CLEAN_MODELS_CSV=""
 for model in "${MODEL_ARRAY[@]}"; do
   model="${model//[[:space:]]/}"
   [[ -z "$model" ]] && continue
@@ -58,11 +59,17 @@ for model in "${MODEL_ARRAY[@]}"; do
     *",$model,"*) ;;
     *) echo "Unknown model key: $model" >&2; exit 2 ;;
   esac
-  found=false
-  for existing in "${CLEAN_MODELS[@]}"; do [[ "$existing" == "$model" ]] && found=true; done
-  [[ "$found" == false ]] && CLEAN_MODELS+=("$model")
+  case ",$CLEAN_MODELS_CSV," in
+    *",$model,"*) ;;
+    *)
+      CLEAN_MODELS+=("$model")
+      [[ -n "$CLEAN_MODELS_CSV" ]] && CLEAN_MODELS_CSV+=","
+      CLEAN_MODELS_CSV+="$model"
+      ;;
+  esac
 done
-MODELS="$(IFS=','; echo "${CLEAN_MODELS[*]}")"
+MODELS="$CLEAN_MODELS_CSV"
+[[ -n "$MODELS" ]] || { echo "Select at least one model." >&2; exit 2; }
 
 INCLUDES_RESTRICTED=false
 if [[ ",$MODELS," =~ $RESTRICTED_PATTERN ]]; then INCLUDES_RESTRICTED=true; fi
