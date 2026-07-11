@@ -90,7 +90,9 @@ productbuild \
   --package-path "$WORK" \
   "$DIST/Samosa-$VERSION-macOS.pkg"
 
-shasum -a 256 "$DIST/Samosa-$VERSION-macOS.pkg" | awk '{print toupper($1) "  " $2}' > "$DIST/Samosa-$VERSION-macOS-SHA256.txt"
+PACKAGE_NAME="Samosa-$VERSION-macOS.pkg"
+PACKAGE_HASH="$(shasum -a 256 "$DIST/$PACKAGE_NAME" | awk '{print toupper($1)}')"
+printf '%s  %s\n' "$PACKAGE_HASH" "$PACKAGE_NAME" > "$DIST/Samosa-$VERSION-macOS-SHA256.txt"
 pkgutil --check-signature "$DIST/Samosa-$VERSION-macOS.pkg" || true
 echo "Package: $DIST/Samosa-$VERSION-macOS.pkg"
 cat "$DIST/Samosa-$VERSION-macOS-SHA256.txt"
