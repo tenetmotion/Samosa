@@ -62,6 +62,7 @@ $Config = @{
     port = $Port
     repo = $SammieRepo
     python = $Python
+    accepted_restricted_models = $false
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $Target "config.json"), $Config, (New-Object System.Text.UTF8Encoding($false)))
 

@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-11
+
+- Added a per-user Windows EXE that downloads a pinned Sammie-Roto-2 runtime into one Samosa installation root.
+- Added Standard, Complete, and Custom model installation modes with explicit noncommercial license acceptance.
+- Added checksum-verified model prefetching, on-demand download status, and a post-install model manager.
+
 ## [1.0.0] - 2026-07-10
 
 - Initial Samosa open-source release.

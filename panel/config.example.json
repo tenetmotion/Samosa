@@ -1,5 +1,6 @@
 {
   "port": 43831,
   "repo": "D:\\path\\to\\Sammie-Roto-2",
-  "python": "D:\\path\\to\\Sammie-Roto-2\\.venv\\Scripts\\python.exe"
+  "python": "D:\\path\\to\\Sammie-Roto-2\\.venv\\Scripts\\python.exe",
+  "accepted_restricted_models": false
 }

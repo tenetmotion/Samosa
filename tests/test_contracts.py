@@ -15,6 +15,7 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(root.find(".//Type").text, "Panel")
         self.assertEqual(root.attrib["ExtensionBundleId"], "com.tenet.samosa.roto")
         self.assertEqual(root.attrib["ExtensionBundleName"], "Samosa")
+        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.1.0")
         params = [node.text for node in root.findall(".//Parameter")]
         self.assertIn("--enable-nodejs", params)
 
@@ -94,10 +95,12 @@ class PluginContractTests(unittest.TestCase):
         tutorial = (ROOT / "docs" / "AFTER_EFFECTS_TUTORIAL.md").read_text(encoding="utf-8")
         self.assertIn("docs/INSTALL.md", readme)
         self.assertIn("docs/AFTER_EFFECTS_TUTORIAL.md", readme)
+        self.assertIn("docs/MODELS.md", readme)
         self.assertIn("Sammie-Roto-2", install)
         self.assertIn("Third-party notices", install)
         self.assertIn("Track objects", tutorial)
         self.assertIn("Export and add to comp", tutorial)
+        self.assertTrue((ROOT / "docs" / "MODELS.md").is_file())
 
 
 if __name__ == "__main__":

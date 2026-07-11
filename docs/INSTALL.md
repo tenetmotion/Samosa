@@ -1,8 +1,8 @@
 # Installing Samosa on Windows
 
-Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Install Sammie-Roto-2 first; Samosa does not bundle Python, model weights, or GPU libraries.
+Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. The recommended online EXE installs the panel, downloads a pinned upstream runtime, and creates an isolated Python environment under one per-user installation root. The EXE does not embed third-party model weights.
 
-Samosa v1.0.0 is Windows-only. A macOS installer and runtime adaptation are planned after the Windows launch.
+Samosa v1.1.0 is Windows-only. A macOS installer and runtime adaptation are planned after the Windows launch.
 
 ## Requirements
 
@@ -12,7 +12,43 @@ Samosa v1.0.0 is Windows-only. A macOS installer and runtime adaptation are plan
 - Internet access during the initial Sammie-Roto-2 and model installation
 - A folder where your Windows account has write permission; do not install under `Program Files`
 
-## 1. Install Sammie-Roto-2
+## Recommended: install with the EXE
+
+Download `Samosa-Setup-1.1.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.1.0.exe
+```
+
+The installer is per-user and does not require administrator access. Its default root is:
+
+```text
+%LOCALAPPDATA%\Programs\Samosa
+```
+
+Choose the PyTorch backend matching the computer, then choose a model mode:
+
+| Mode | Installed immediately | Later behavior |
+| --- | --- | --- |
+| Standard | SAM2 Base | Other models download automatically when first requested. |
+| Complete | Every registry model | No first-use model downloads for the current registry. |
+| Custom | Selected packs | Unselected models remain available on demand. |
+
+Complete and restricted Custom selections require acknowledgment that MatAnyone/MatAnyone2, VideoMaMa, MiniMax Remover, and VideoMaMa's SVD VAE dependency have additional or noncommercial terms. Review [Third-party notices](../THIRD_PARTY_NOTICES.md) before use.
+
+The installer downloads pinned Sammie-Roto-2 source, verifies its SHA-256, creates `.venv`, verifies model checksums, writes the CEP configuration, and creates a junction at Adobe's required extension path. Actual program/runtime files remain under the single Samosa root.
+
+Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
+
+## Adding models after Standard installation
+
+No repair is required. Either use the missing model in Samosa and allow its first-use download, or open **Start > Samosa > Manage model packs** to pre-download it. Rerunning the EXE in Complete or Custom mode also adds packs while skipping models already present with valid checksums. See [Model installation](MODELS.md).
+
+## Source-based installation
+
+The source installer remains available for developers and users who already maintain Sammie-Roto-2 separately.
+
+### 1. Install Sammie-Roto-2
 
 Download the current source from the [Sammie-Roto-2 repository](https://github.com/Zarxrax/Sammie-Roto-2) and extract it, or clone it:
 
@@ -35,7 +71,7 @@ The installer creates a local `.venv` and downloads the selected PyTorch runtime
 
 Open a short clip and confirm that the application starts and can load footage. You may then close it; Samosa uses the same environment and checkpoints through its own local service.
 
-## 2. Install the Samosa panel
+### 2. Install the Samosa panel
 
 Download this repository's source and extract it to a permanent folder, or clone it:
 
@@ -67,7 +103,7 @@ The installer:
 
 Restart After Effects, then open **Window > Extensions (Legacy) > Samosa**.
 
-## 3. First-run verification
+## First-run verification
 
 1. Create or open a composition containing imported footage.
 2. Select one footage layer whose source is a local file.
@@ -81,11 +117,17 @@ Samosa is GPL-3.0, but some optional engines are noncommercial. MatAnyone uses t
 
 ## Updating
 
-Pull or extract the new Samosa source over a clean folder, then rerun `install.ps1` with the same Sammie-Roto-2 path. Restart After Effects after every panel update.
+Run the newer EXE over the existing installation. It preserves already verified model files and only refreshes the pinned runtime when the supported upstream revision changes. Restart After Effects after every panel update.
+
+For source-based installations, pull or extract the new Samosa source over a clean folder, then rerun `install.ps1` with the same Sammie-Roto-2 path.
 
 Update Sammie-Roto-2 using its upstream instructions. Because Samosa integrates with upstream Python modules, review Samosa release notes before moving to a new incompatible upstream version.
 
 ## Uninstalling
+
+Use **Windows Settings > Apps > Installed apps > Samosa > Uninstall** for EXE installations. This removes the CEP junction, runtime, environment, and downloaded checkpoints under the Samosa root. Exports stored elsewhere are not removed.
+
+For source-based installations:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall

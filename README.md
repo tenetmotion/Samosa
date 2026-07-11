@@ -10,7 +10,7 @@ Samosa is an independent integration project. It is not an official Sammie-Roto-
 
 ![Samosa panel](docs/images/samosa-panel.png)
 
-**Documentation:** [Complete installation](docs/INSTALL.md) | [After Effects tutorial](docs/AFTER_EFFECTS_TUTORIAL.md) | [Development](docs/DEVELOPMENT.md) | [Third-party licenses](THIRD_PARTY_NOTICES.md)
+**Documentation:** [Complete installation](docs/INSTALL.md) | [Model installation](docs/MODELS.md) | [After Effects tutorial](docs/AFTER_EFFECTS_TUTORIAL.md) | [Development](docs/DEVELOPMENT.md) | [Third-party licenses](THIRD_PARTY_NOTICES.md)
 
 ## Status
 
@@ -38,19 +38,17 @@ Samosa does not bundle Sammie-Roto-2, model weights, Python, FFmpeg, or Adobe SD
 
 ## Install
 
-1. Download or clone [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2), run `install.bat`, and verify it with `run_sammie.bat`.
-2. Download or clone this repository.
-3. Run the Samosa installer with the upstream checkout path:
+Download `Samosa-Setup-1.1.0.exe` from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest) and run it. The per-user installer downloads a pinned Sammie-Roto-2 runtime, creates its isolated Python environment, installs the CEP panel, and configures After Effects under one Samosa installation root.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -SammieRepo "D:\path\to\Sammie-Roto-2"
-```
+Choose one model mode:
 
-The installer can also use the `SAMMIE_REPO` environment variable or a sibling `Sammie-Roto-2` directory. It installs `com.tenet.samosa.roto` under `%APPDATA%\Adobe\CEP\extensions` and generates a machine-local `config.json` there.
+- **Standard:** installs SAM2 Base now; missing models download when first requested.
+- **Complete:** pre-downloads every supported model after the restricted-model license notice is accepted.
+- **Custom:** selects individual model packs to pre-download.
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
-For hardware choices, verification commands, updating, uninstalling, and troubleshooting, follow the [complete installation guide](docs/INSTALL.md).
+For installer modes, source-based setup, updating, uninstalling, and troubleshooting, follow the [complete installation guide](docs/INSTALL.md). See [Model installation](docs/MODELS.md) for exactly what happens when Standard mode encounters a missing model.
 
 ## Quick tutorial
 

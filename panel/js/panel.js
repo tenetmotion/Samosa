@@ -89,6 +89,19 @@
       }
     } catch (e) { setStatus(e.message, "error"); }
   }
+  function confirmRestrictedModel(key, label, terms) {
+    if (config.accepted_restricted_models) return true;
+    var storageKey = "samosa.modelLicense." + key;
+    try { if (localStorage.getItem(storageKey) === "accepted") return true; } catch (e) {}
+    var accepted = window.confirm(
+      label + " is provided under " + terms + " and is not licensed for unrestricted commercial use.\n\n" +
+      "Review THIRD_PARTY_NOTICES.md before continuing. Download and use this model?"
+    );
+    if (accepted) {
+      try { localStorage.setItem(storageKey, "accepted"); } catch (e2) {}
+    }
+    return accepted;
+  }
   function escapeJs(value) {
     return JSON.stringify(String(value));
   }
@@ -288,6 +301,7 @@
       el("jobBar").classList.remove("hidden");
       el("jobLabel").textContent = label;
       while (activeJob && ["queued", "running"].indexOf(activeJob.status) >= 0) {
+        el("jobLabel").textContent = activeJob.message || label;
         el("jobProgress").value = activeJob.progress || 0;
         el("jobPercent").textContent = (activeJob.progress || 0) + "%";
         await sleep(500);
@@ -364,8 +378,19 @@
     el("clearTracking").onclick = async function () { state = await api("POST", "/api/tracking/clear", {}); renderState(); setStatus("Tracking cleared; correction points kept"); };
     el("propagate").onclick = function () { startJob("/api/propagate", {}, "Tracking"); };
     el("deduplicate").onclick = function () { startJob("/api/dedupe", { threshold: number("dedupeThreshold") }, "Deduplication"); };
-    el("runMatting").onclick = function () { startJob("/api/matting", {}, "Matting"); };
-    el("runRemoval").onclick = function () { startJob("/api/removal", { method: el("removalMethod").value }, "Object removal"); };
+    el("runMatting").onclick = function () {
+      var model = el("mattingModel").value;
+      var terms = model === "VideoMaMa"
+        ? "CC BY-NC 4.0 terms plus separate Stability AI Community License terms for its SVD VAE dependency"
+        : "the S-Lab noncommercial license";
+      if (confirmRestrictedModel(model.toLowerCase(), model, terms)) startJob("/api/matting", {}, "Matting");
+    };
+    el("runRemoval").onclick = function () {
+      var method = el("removalMethod").value;
+      if (method !== "MiniMax-Remover" || confirmRestrictedModel("minimax", method, "noncommercial terms that must be reviewed at the current model host")) {
+        startJob("/api/removal", { method: method }, "Object removal");
+      }
+    };
     el("exportImport").onclick = function () {
       startJob("/api/export", { output_type: el("outputType").value, format: el("outputFormat").value, object_id: number("exportObject"), quality: number("quality"), name: el("outputName").value, output_dir: el("outputDestination").value }, "Export", importOutput);
     };

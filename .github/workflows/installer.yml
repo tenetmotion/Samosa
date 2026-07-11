@@ -1,0 +1,44 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version
+        required: true
+        default: 1.1.0
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build installer
+        shell: powershell
+        run: |
+          $version = "${{ github.event.release.tag_name || inputs.version }}".TrimStart("v")
+          .\scripts\build-installer.ps1 -Version $version
+          $exe = Get-Item ".\dist\installer\Samosa-Setup-$version.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe.FullName).Hash
+          "$hash  $($exe.Name)" | Set-Content -Encoding ASCII ".\dist\installer\Samosa-Setup-$version-SHA256.txt"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Samosa-Windows-installer
+          path: |
+            dist/installer/*.exe
+            dist/installer/*-SHA256.txt
+      - name: Attach installer to release
+        if: github.event_name == 'release'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/installer/*.exe dist/installer/*-SHA256.txt --clobber

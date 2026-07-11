@@ -215,11 +215,20 @@ class Engine:
             spec.final_path.parent.mkdir(parents=True, exist_ok=True)
             response = requests.get(spec.url, stream=True, timeout=30, headers={"Accept-Encoding": "identity"})
             response.raise_for_status()
+            job = getattr(_progress_context, "job", None)
+            total_size = int(response.headers.get("content-length", "0"))
+            downloaded = 0
+            if job:
+                job.message = "Downloading %s" % spec.filename
+                job.progress = 0
             try:
                 with open(spec.part_path, "wb") as handle:
                     for chunk in response.iter_content(1024 * 1024):
                         if chunk:
                             handle.write(chunk)
+                            downloaded += len(chunk)
+                            if job and total_size:
+                                job.progress = max(0, min(100, int(downloaded * 100 / total_size)))
                 digest = hashlib.md5()
                 with open(spec.part_path, "rb") as handle:
                     for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -243,7 +252,7 @@ class Engine:
         return {
             "ok": True,
             "service": "samosa-ae",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "mock": self.mock,
             "repo": str(self.repo),
             "device": device,
@@ -731,7 +740,7 @@ class Engine:
 
 class Handler(BaseHTTPRequestHandler):
     engine = None
-    server_version = "SamosaAE/1.0"
+    server_version = "SamosaAE/1.1"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
