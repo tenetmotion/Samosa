@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.2.1"
 #endif
 
 #define MyAppName "Samosa"
@@ -37,6 +37,7 @@ VersionInfoProductVersion={#MyAppVersion}
 Source: "..\panel\*"; DestDir: "{app}\cep"; Excludes: "config.json,__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\backend\*"; DestDir: "{app}\backend"; Excludes: "__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "bootstrap.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "invoke-utf8-script.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "download_models.py"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "manage-models.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs

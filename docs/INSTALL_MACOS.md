@@ -1,6 +1,6 @@
 # Installing Samosa on macOS
 
-Samosa 1.2.0 provides an online PKG for Apple Silicon and Intel Macs. The package installs the After Effects CEP panel and creates a writable per-user Sammie-Roto-2 runtime.
+Samosa 1.2.1 provides an online PKG for Apple Silicon and Intel Macs. The package installs the After Effects CEP panel and creates a writable per-user Sammie-Roto-2 runtime.
 
 ## Requirements
 
@@ -13,13 +13,13 @@ Apple Silicon uses PyTorch Metal Performance Shaders when available. Intel Macs 
 
 ## Install
 
-1. Download `Samosa-1.2.0-macOS.pkg` and `Samosa-1.2.0-macOS-SHA256.txt` from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest).
+1. Download `Samosa-1.2.1-macOS.pkg` and `Samosa-1.2.1-macOS-SHA256.txt` from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest).
 2. In Terminal, verify the package:
 
 ```bash
 cd ~/Downloads
-shasum -a 256 Samosa-1.2.0-macOS.pkg
-cat Samosa-1.2.0-macOS-SHA256.txt
+shasum -a 256 Samosa-1.2.1-macOS.pkg
+cat Samosa-1.2.1-macOS-SHA256.txt
 ```
 
 3. Open the PKG and follow Installer. This initial package is unsigned. If Gatekeeper blocks it, open **System Settings > Privacy & Security**, confirm that the package came from the Samosa GitHub release, then choose **Open Anyway**.

@@ -5,7 +5,7 @@
 1. Import footage and place it in a composition.
 2. Select exactly one file-backed footage layer in the timeline.
 3. Open **Window > Extensions (Legacy) > Samosa**.
-4. Choose **Load selection**. Samosa loads the source clip and starts on the corresponding source frame.
+4. Choose **Load selection**. Samosa loads only the selected layer's source-time In/Out interval and starts on the corresponding source frame.
 
 The Samosa viewer is interactive. Use its timeline controls to move through source frames. The percentage button in the viewer corner cycles through 100%, 75%, and 50% display sizes.
 
@@ -33,7 +33,7 @@ Use **Remove** when the selected object should be filled out of the shot. OpenCV
 4. Choose an export location or leave it on the default folder.
 5. Choose **Export and add to comp**.
 
-Samosa appends the selected object and output description automatically. For example, source `interview.mov`, object `Hero Person`, and `Matting-Matte` produce `interview_Hero_Person_matting_matte`. The result is imported above the selected layer and inherits its timing and transform animation.
+Samosa appends the selected object and output description automatically. For example, source `interview.mov`, object `Hero Person`, and `Matting-Matte` produce `interview_Hero_Person_matting_matte`. The result is imported above the selected layer, begins at that layer's In point, and inherits its positive time stretch and transform animation. Time-remapped and reverse-stretched layers must be precomposed or rendered before loading.
 
 ## Choosing an output
 

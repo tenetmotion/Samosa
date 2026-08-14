@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-13
+
+- Fixed Windows PowerShell 5.1 setup by decoding the downloaded uv installer explicitly as UTF-8.
+- Limited decoding to the selected After Effects layer's source-time In/Out interval.
+- Fixed source-frame selection and imported-result placement for trimmed and time-stretched footage.
+- Preserved interpreted footage frame rates, added VFR timestamp sampling, and conformed generated sequences correctly.
+- Added backend identity checks and per-panel lifecycle registration so outdated detached services do not remain active and shared services are not stopped prematurely.
+- Added synthetic trim, HTTP range, lifecycle, installer, and panel timing regression tests.
+
 ## [1.2.0] - 2026-07-11
 
 - Added an unsigned macOS PKG for Apple Silicon and Intel Macs.

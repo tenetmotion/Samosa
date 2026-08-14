@@ -14,10 +14,10 @@ This guide covers Windows. For Apple Silicon and Intel Macs, use the [macOS inst
 
 ## Recommended: install with the EXE
 
-Download `Samosa-Setup-1.2.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
+Download `Samosa-Setup-1.2.1.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.2.0.exe
+Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.2.1.exe
 ```
 
 The installer is per-user and does not require administrator access. Its default root is:

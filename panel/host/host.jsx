@@ -29,6 +29,25 @@
         return null;
     }
 
+    function sourceBounds(layer) {
+        var stretch = Number(layer.stretch);
+        if (layer.timeRemapEnabled) {
+            throw new Error("Samosa cannot load a time-remapped layer. Disable Time Remapping on the selected layer first.");
+        }
+        if (!(stretch > 0)) {
+            throw new Error("Samosa cannot load a reverse-stretched layer. Set the selected layer's Stretch to a positive value first.");
+        }
+        var sourceStart = (Number(layer.inPoint) - Number(layer.startTime)) * 100 / stretch;
+        var sourceEnd = (Number(layer.outPoint) - Number(layer.startTime)) * 100 / stretch;
+        sourceStart = Math.max(0, sourceStart);
+        sourceEnd = Math.max(sourceStart, sourceEnd);
+        if (!(sourceEnd > sourceStart)) {
+            throw new Error("The selected layer has no positive source-time range between its In and Out points.");
+        }
+        // The source interval is half-open: sourceStart is inclusive and sourceEnd is exclusive.
+        return { sourceStart: sourceStart, sourceEnd: sourceEnd, stretch: stretch };
+    }
+
     function copyProperty(source, target) {
         if (!source || !target || target.isReadOnly) {
             return;
@@ -75,11 +94,19 @@
             if (!layer) {
                 return result({ ok: false, error: "Select exactly one file-backed footage layer." });
             }
+            var bounds = sourceBounds(layer);
             var file = layer.source.mainSource.file;
             if (!file || !file.exists) {
                 return result({ ok: false, error: "The selected footage file is offline." });
             }
-            var sourceTime = Math.max(0, (comp.time - layer.startTime) * 100 / layer.stretch);
+            var sourceFrameRate = Number(layer.source.frameRate || 0);
+            var sourceNativeFrameRate = sourceFrameRate;
+            try {
+                sourceFrameRate = Number(layer.source.mainSource.displayFrameRate || sourceFrameRate);
+                sourceNativeFrameRate = Number(layer.source.mainSource.nativeFrameRate || sourceFrameRate);
+            } catch (e1) {
+            }
+            var sourceTime = Math.max(0, (comp.time - layer.startTime) * 100 / bounds.stretch);
             return result({
                 ok: true,
                 path: file.fsName,
@@ -88,10 +115,14 @@
                 sourceName: layer.source.name,
                 layerIndex: layer.index,
                 sourceTime: sourceTime,
+                sourceFrameRate: sourceFrameRate,
+                sourceNativeFrameRate: sourceNativeFrameRate,
+                sourceStart: bounds.sourceStart,
+                sourceEnd: bounds.sourceEnd,
                 startTime: layer.startTime,
                 inPoint: layer.inPoint,
                 outPoint: layer.outPoint,
-                stretch: layer.stretch,
+                stretch: bounds.stretch,
                 frameRate: comp.frameRate
             });
         } catch (e) {
@@ -99,7 +130,7 @@
         }
     };
 
-    $._samosaAE.importResult = function (pathValue, isSequence, referenceIndex) {
+    $._samosaAE.importResult = function (pathValue, isSequence, referenceIndex, resultFps, resultTrimmed) {
         app.beginUndoGroup("Samosa: Add Result");
         try {
             var file = new File(pathValue);
@@ -119,11 +150,13 @@
             }
             var item = app.project.importFile(options);
             item.name = "Samosa - " + item.name;
+            var outputFps = Number(resultFps);
+            var trimmed = resultTrimmed === true || resultTrimmed === 1 || resultTrimmed === "true";
             try {
                 if (item.mainSource instanceof FileSource) {
                     item.mainSource.alphaMode = AlphaMode.STRAIGHT;
                     if (isSequence && comp) {
-                        item.mainSource.conformFrameRate = comp.frameRate;
+                        item.mainSource.conformFrameRate = outputFps > 0 ? outputFps : comp.frameRate;
                     }
                 }
             } catch (e1) {
@@ -137,10 +170,11 @@
             if (reference) {
                 layer.moveBefore(reference);
                 try { layer.threeDLayer = reference.threeDLayer; } catch (e2) {}
-                try { layer.startTime = reference.startTime; } catch (e3) {}
-                try { layer.inPoint = reference.inPoint; } catch (e4) {}
-                try { layer.outPoint = reference.outPoint; } catch (e5) {}
-                try { layer.stretch = reference.stretch; } catch (e6) {}
+                // Apply stretch before timing bounds so AE evaluates the final layer duration consistently.
+                try { layer.stretch = reference.stretch; } catch (e3) {}
+                try { layer.startTime = trimmed ? reference.inPoint : reference.startTime; } catch (e4) {}
+                try { layer.inPoint = reference.inPoint; } catch (e5) {}
+                try { layer.outPoint = reference.outPoint; } catch (e6) {}
                 copyTransform(reference, layer);
             }
             return result({ ok: true, layerName: layer.name, projectOnly: false });

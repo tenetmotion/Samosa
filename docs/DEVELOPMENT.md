@@ -23,10 +23,11 @@ Restart After Effects after manifest changes. Panel runtime logs are written und
 
 ## Tests
 
-Source contracts have no third-party Python requirements:
+The dependency-light suite runs contracts, installer checks, frame-boundary tests, and panel timing tests. The real media fixture runs when PyAV, OpenCV, and NumPy are available:
 
 ```powershell
-python -m unittest discover -s tests -p test_contracts.py -v
+python -m unittest discover -s tests -v
+node tests/test_panel_runtime.js
 ```
 
 The integration suite uses deterministic mock processing but imports the installed upstream packages:
@@ -36,7 +37,7 @@ $env:SAMMIE_REPO = "D:\src\Sammie-Roto-2"
 & "$env:SAMMIE_REPO\.venv\Scripts\python.exe" -m unittest discover -s tests -v
 ```
 
-Before a pull request, also open the panel in After Effects, load file-backed footage, add include and exclude points, track, run one matting job, cancel one job, export a PNG sequence, and confirm the imported layer preserves timing and transform.
+Before a pull request, also open the panel in After Effects, load a trimmed file-backed footage layer, confirm the frame count matches its In/Out interval, add include and exclude points, track, run one matting job, cancel one job, export a PNG sequence, and confirm the imported layer begins at the reference In point while preserving positive stretch and transform.
 
 ## Compatibility changes
 

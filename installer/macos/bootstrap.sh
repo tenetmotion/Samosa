@@ -211,7 +211,7 @@ import datetime, json, sys
 path, mode, models, port = sys.argv[1:]
 with open(path, "w", encoding="utf-8") as handle:
     json.dump({
-        "version": "1.2.0", "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "version": "1.2.1", "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": "macos", "backend": "mps-or-cpu", "install_mode": mode,
         "models_requested": [item for item in models.split(",") if item],
         "sammie_commit": "129a0a54950d71b535cdcdbd06090c5583e293d9", "port": int(port),

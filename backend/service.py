@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -15,6 +18,7 @@ import time
 import traceback
 import uuid
 from dataclasses import asdict
+from fractions import Fraction
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,11 +38,177 @@ OUTPUT_TAGS = {
     "ObjectRemoval": "object_removal",
 }
 
+BACKEND_SHA256 = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
+
+
+def _finite_seconds(value, name):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ApiError("%s must be a finite number" % name)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ApiError("%s must be a finite number" % name)
+    if not math.isfinite(number):
+        raise ApiError("%s must be a finite number" % name)
+    if number < 0:
+        raise ApiError("%s must be non-negative" % name)
+    return number
+
+
+def _fraction(value):
+    if isinstance(value, Fraction):
+        return value
+    return Fraction(str(value))
+
+
+def _snap_near_integer(product):
+    """Remove float serialization noise at exact frame boundaries."""
+    nearest = int(product + Fraction(1, 2))
+    if abs(product - nearest) <= Fraction(1, 1_000_000_000):
+        return Fraction(nearest)
+    return product
+
+
+def _calculate_frame_bounds(source_start, source_end, fps):
+    """Return inclusive/exclusive source frame bounds for a time range."""
+    start = _finite_seconds(source_start, "source_start")
+    end = _finite_seconds(source_end, "source_end")
+    if start is None:
+        start = 0.0
+    if end is not None and end <= start:
+        raise ApiError("source_end must be greater than source_start")
+    fps_fraction = _fraction(fps)
+    if fps_fraction <= 0:
+        raise ApiError("Video frame rate must be positive")
+    start_product = _snap_near_integer(_fraction(start) * fps_fraction)
+    start_frame = start_product.numerator // start_product.denominator
+    end_frame = None
+    if end is not None:
+        end_product = _snap_near_integer(_fraction(end) * fps_fraction)
+        end_frame = -((-end_product.numerator) // end_product.denominator)
+        if end_frame <= start_frame:
+            raise ApiError("The requested range does not contain a video frame")
+    return start, end, start_frame, end_frame
+
+
+def _parent_process_exists(parent_pid):
+    """Check process existence without requiring psutil on Windows or macOS."""
+    try:
+        parent_pid = int(parent_pid)
+    except (TypeError, ValueError):
+        return False
+    if parent_pid <= 0:
+        return False
+    if os.name == "nt":
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            process_query_limited_information, False, parent_pid
+        )
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        return ctypes.windll.kernel32.GetLastError() == 5
+    try:
+        os.kill(parent_pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        return exc.errno == errno.EPERM
+    return True
+
 
 class ApiError(Exception):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
         self.status = status
+
+
+class ClientRegistry:
+    """Tracks CEP panel clients so one panel cannot stop another panel's service."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.clients = {}
+        self.managed = False
+        self.empty_since = None
+
+    def register(self, token, parent_pid):
+        token = str(token or "").strip()
+        if not token or len(token) > 128:
+            raise ApiError("client_token must contain 1 to 128 characters")
+        try:
+            parent_pid = int(parent_pid)
+        except (TypeError, ValueError):
+            raise ApiError("parent_pid must be a process id")
+        if not _parent_process_exists(parent_pid):
+            raise ApiError("The panel process is not running")
+        with self.lock:
+            # CEP reloads can replace the document without delivering a usable
+            # beforeunload request. A new token from the same renderer process
+            # supersedes that stale registration.
+            self.clients = {
+                existing_token: existing_pid
+                for existing_token, existing_pid in self.clients.items()
+                if existing_pid != parent_pid or existing_token == token
+            }
+            self.clients[token] = parent_pid
+            self.managed = True
+            self.empty_since = None
+            return len(self.clients)
+
+    def release(self, token):
+        with self.lock:
+            self.clients.pop(str(token or ""), None)
+            if self.managed and not self.clients and self.empty_since is None:
+                self.empty_since = time.monotonic()
+            return len(self.clients)
+
+    def count(self):
+        with self.lock:
+            return len(self.clients)
+
+    def unused_for(self, grace_period=2.0):
+        with self.lock:
+            alive = {}
+            for token, parent_pid in self.clients.items():
+                if _parent_process_exists(parent_pid):
+                    alive[token] = parent_pid
+            self.clients = alive
+            if self.clients:
+                self.empty_since = None
+                return False
+            if not self.managed:
+                return False
+            if self.empty_since is None:
+                self.empty_since = time.monotonic()
+                return False
+            return time.monotonic() - self.empty_since >= grace_period
+
+
+def start_client_watchdog(server, registry, poll_interval=0.5, grace_period=2.0):
+    """Stop the service after every registered CEP panel process has exited."""
+    stop_event = threading.Event()
+
+    def watch():
+        while not stop_event.wait(poll_interval):
+            if registry.unused_for(grace_period):
+                server.shutdown()
+                return
+
+    thread = threading.Thread(target=watch, name="samosa-client-watchdog", daemon=True)
+    thread.start()
+    return stop_event, thread
+
+
+def shutdown_if_unused(server, registry, delay=2.0):
+    """Allow an unloading/reloading panel a short window to register again."""
+    time.sleep(delay)
+    if registry.unused_for(delay):
+        server.shutdown()
 
 
 class NullProgressDialog:
@@ -134,6 +304,11 @@ class Engine:
         self.lock = threading.RLock()
         self.jobs = {}
         self.loaded_path = None
+        self.source_start_time = 0.0
+        self.source_end_time = None
+        self.source_start_frame = 0
+        self.source_end_frame_exclusive = 0
+        self.trimmed = False
         self.points = []
         self.sam_manager = None
         self.matting_manager = None
@@ -252,11 +427,12 @@ class Engine:
         return {
             "ok": True,
             "service": "samosa-ae",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "mock": self.mock,
             "repo": str(self.repo),
             "device": device,
             "cuda": cuda,
+            "backend_sha256": BACKEND_SHA256,
         }
 
     def _reset_dirs(self):
@@ -268,10 +444,110 @@ class Engine:
         ):
             os.makedirs(folder, exist_ok=True)
 
-    def load_media(self, path: str):
+    def _write_decoded_frame(self, frame, output_frame_number, frame_format):
+        array = frame.to_ndarray(format="bgr24")
+        target = os.path.join(
+            self.core.frames_dir, "%05d.%s" % (output_frame_number, frame_format)
+        )
+        if not self.cv2.imwrite(target, array):
+            raise RuntimeError("Failed to write frame %d" % output_frame_number)
+
+    def _decode_video(
+        self, container, stream, frame_format, start_frame, end_frame, native_fps
+    ):
+        """Decode a source range and sample VFR input at AE's native frame cadence."""
+        native_rate = _fraction(native_fps)
+        first_target = Fraction(start_frame, 1) / native_rate
+        stream_start_pts = stream.start_time if stream.start_time is not None else 0
+        stream_time_base = _fraction(stream.time_base)
+        if first_target > 0:
+            seek_pts = stream_start_pts + int(first_target / stream_time_base)
+            try:
+                container.seek(seek_pts, stream=stream, backward=True, any_frame=False)
+            except Exception:
+                # A freshly opened non-seekable container is already positioned at
+                # the beginning, so decoding forward remains correct.
+                pass
+
+        def timed_frames():
+            last_time = None
+            for frame in container.decode(stream):
+                if frame.pts is not None:
+                    frame_time = Fraction(frame.pts - stream_start_pts) * stream_time_base
+                elif last_time is None:
+                    frame_time = first_target
+                else:
+                    frame_time = last_time + Fraction(1, 1) / native_rate
+                last_time = frame_time
+                yield frame, frame_time
+
+        frames = iter(timed_frames())
+        try:
+            current_frame, current_time = next(frames)
+        except StopIteration:
+            return 0
+
+        epsilon = Fraction(1, 1_000_000_000)
+        previous_frame = None
+        previous_time = None
+        count = 0
+
+        if end_frame is None:
+            def remaining_frames():
+                yield current_frame, current_time
+                for item in frames:
+                    yield item
+
+            for frame, frame_time in remaining_frames():
+                if frame_time <= first_target + epsilon:
+                    previous_frame = frame
+                    continue
+                if previous_frame is not None:
+                    self._write_decoded_frame(previous_frame, count, frame_format)
+                    count += 1
+                    previous_frame = None
+                self._write_decoded_frame(frame, count, frame_format)
+                count += 1
+            if previous_frame is not None:
+                self._write_decoded_frame(previous_frame, count, frame_format)
+                count += 1
+            return count
+
+        for source_frame in range(start_frame, end_frame):
+            # AE conforming changes each frame's duration without changing frame
+            # content. Convert the effective-rate frame ordinal back to the
+            # original media PTS cadence to select that same content frame.
+            target_time = Fraction(source_frame, 1) / native_rate
+            while current_frame is not None and current_time <= target_time + epsilon:
+                previous_frame = current_frame
+                previous_time = current_time
+                try:
+                    current_frame, current_time = next(frames)
+                except StopIteration:
+                    current_frame, current_time = None, None
+            selected_frame = previous_frame if previous_frame is not None else current_frame
+            if selected_frame is None:
+                break
+            if (
+                current_frame is None
+                and previous_time is not None
+                and target_time >= previous_time + Fraction(1, 1) / native_rate - epsilon
+            ):
+                break
+            self._write_decoded_frame(selected_frame, count, frame_format)
+            count += 1
+        return count
+
+    def load_media(
+        self, path: str, source_start=None, source_end=None,
+        source_fps=None, source_native_fps=None,
+    ):
+        if (source_start is None) != (source_end is None):
+            raise ApiError("source_start and source_end must be provided together")
         source = Path(path)
         if not source.exists():
             raise ApiError("Media file not found: %s" % source)
+        requested_range = source_start is not None or source_end is not None
         with self.lock:
             self._reset_dirs()
             self.points = []
@@ -285,28 +561,58 @@ class Engine:
                 image = self.cv2.imread(str(source), self.cv2.IMREAD_COLOR)
                 if image is None:
                     raise ApiError("Could not decode image: %s" % source)
-                self.cv2.imwrite(os.path.join(self.core.frames_dir, "00000.png"), image)
                 height, width = image.shape[:2]
                 fps, count, color_space = 24.0, 1, 1
+                start_time, end_time, start_frame, requested_end_frame = _calculate_frame_bounds(
+                    source_start, source_end, fps
+                )
+                if requested_range and (start_frame > 0 or (requested_end_frame is not None and requested_end_frame <= 0)):
+                    raise ApiError("The requested range does not contain the image frame")
+                self.cv2.imwrite(os.path.join(self.core.frames_dir, "00000.png"), image)
             else:
                 container = self.av.open(str(source))
                 try:
                     stream = container.streams.video[0]
                     stream.thread_type = "AUTO"
                     width, height = stream.width, stream.height
-                    fps = float(stream.average_rate or 24.0)
+                    native_fps = (
+                        _finite_seconds(source_native_fps, "source_native_fps")
+                        or float(stream.average_rate or 24.0)
+                    )
+                    fps = _finite_seconds(source_fps, "source_fps") or native_fps
+                    if fps <= 0:
+                        raise ApiError("source_fps must be greater than zero")
                     color_space = int(stream.codec_context.colorspace or 1)
-                    count = 0
-                    for frame in container.decode(stream):
-                        array = frame.to_ndarray(format="bgr24")
-                        target = os.path.join(self.core.frames_dir, "%05d.%s" % (count, frame_format))
-                        if not self.cv2.imwrite(target, array):
-                            raise RuntimeError("Failed to write frame %d" % count)
-                        count += 1
+                    start_time, end_time, start_frame, requested_end_frame = _calculate_frame_bounds(
+                        source_start, source_end, fps
+                    )
+                    if requested_range:
+                        count = self._decode_video(
+                            container, stream, frame_format, start_frame,
+                            requested_end_frame, native_fps,
+                        )
+                    else:
+                        start_frame = 0
+                        requested_end_frame = None
+                        count = 0
+                        for frame in container.decode(stream):
+                            self._write_decoded_frame(frame, count, frame_format)
+                            count += 1
                 finally:
                     container.close()
                 if count == 0:
                     raise ApiError("No video frames were decoded")
+            if requested_range and count == 0:
+                raise ApiError("The requested range contains no video frames")
+
+            if (
+                requested_end_frame is None
+                or count < requested_end_frame - start_frame
+            ):
+                end_frame = start_frame + count
+                end_time = float(_fraction(end_frame) / _fraction(fps))
+            else:
+                end_frame = requested_end_frame
 
             self.core.VideoInfo.width = width
             self.core.VideoInfo.height = height
@@ -318,6 +624,11 @@ class Engine:
             self.settings_mgr.save_points([])
             self.settings_mgr.save_session_settings()
             self.loaded_path = str(source)
+            self.source_start_time = float(start_time)
+            self.source_end_time = float(end_time)
+            self.source_start_frame = int(start_frame)
+            self.source_end_frame_exclusive = int(end_frame)
+            self.trimmed = requested_range
             return self.state()
 
     def state(self):
@@ -337,6 +648,11 @@ class Engine:
             "height": int(self.core.VideoInfo.height),
             "fps": float(self.core.VideoInfo.fps),
             "total_frames": int(self.core.VideoInfo.total_frames),
+            "source_start_time": self.source_start_time,
+            "source_end_time": self.source_end_time,
+            "source_start_frame": int(self.source_start_frame),
+            "source_end_frame_exclusive": int(self.source_end_frame_exclusive),
+            "trimmed": bool(self.trimmed),
             "points": list(self.points),
             "object_ids": object_ids,
             "settings": asdict(settings),
@@ -654,6 +970,7 @@ class Engine:
                 raise ApiError("%s does not support %s" % (fmt.display_name, output_type))
             if fmt.is_sequence and format_id == "png":
                 first = None
+                frame_count = 0
                 for frame_number in range(self.core.VideoInfo.total_frames):
                     if job.cancelled:
                         break
@@ -669,10 +986,17 @@ class Engine:
                         raise RuntimeError("Could not write %s" % target)
                     if first is None:
                         first = target
+                    frame_count += 1
                     job.progress = int((frame_number + 1) * 100 / self.core.VideoInfo.total_frames)
                 if first is None:
                     raise RuntimeError("Exporter produced no files")
-                return {"path": str(first), "sequence": True, "folder": str(output_root)}
+                return {
+                    "path": str(first), "sequence": True, "folder": str(output_root),
+                    "fps": float(self.core.VideoInfo.fps), "frame_count": frame_count,
+                    "trimmed": bool(self.trimmed),
+                    "source_start_time": self.source_start_time,
+                    "source_end_time": self.source_end_time,
+                }
             if fmt.is_sequence:
                 from sammie.export_formats import ExportSettings
                 from sammie.export_workers import SequenceExportWorker
@@ -689,7 +1013,13 @@ class Engine:
                 if not files:
                     detail = messages[-1][1] if messages else "Exporter produced no files"
                     raise RuntimeError(detail)
-                return {"path": str(files[0]), "sequence": True, "folder": str(output_root)}
+                return {
+                    "path": str(files[0]), "sequence": True, "folder": str(output_root),
+                    "fps": float(self.core.VideoInfo.fps), "frame_count": len(files),
+                    "trimmed": bool(self.trimmed),
+                    "source_start_time": self.source_start_time,
+                    "source_end_time": self.source_end_time,
+                }
             output_path = output_root / (base + fmt.file_extension)
             container = self.av.open(str(output_path), mode="w")
             fps = Fraction(self.core.VideoInfo.fps).limit_denominator(1001)
@@ -700,6 +1030,7 @@ class Engine:
             stream.pix_fmt = fmt.get_pixel_format(has_alpha)
             for key, value in fmt.get_codec_options(quality).items():
                 stream.options[key] = str(value)
+            frame_count = 0
             try:
                 for frame_number in range(self.core.VideoInfo.total_frames):
                     if job.cancelled:
@@ -714,6 +1045,7 @@ class Engine:
                     av_frame.pts = frame_number
                     for packet in stream.encode(av_frame):
                         container.mux(packet)
+                    frame_count += 1
                     job.progress = int((frame_number + 1) * 100 / self.core.VideoInfo.total_frames)
                 for packet in stream.encode():
                     container.mux(packet)
@@ -721,7 +1053,13 @@ class Engine:
                 container.close()
             if not output_path.exists() or output_path.stat().st_size == 0:
                 raise RuntimeError("Exporter produced no file")
-            return {"path": str(output_path), "sequence": False, "folder": str(output_root)}
+            return {
+                "path": str(output_path), "sequence": False, "folder": str(output_root),
+                "fps": float(self.core.VideoInfo.fps), "frame_count": frame_count,
+                "trimmed": bool(self.trimmed),
+                "source_start_time": self.source_start_time,
+                "source_end_time": self.source_end_time,
+            }
 
         return self._new_job("export", run)
 
@@ -740,7 +1078,7 @@ class Engine:
 
 class Handler(BaseHTTPRequestHandler):
     engine = None
-    server_version = "SamosaAE/1.2"
+    server_version = "SamosaAE/1.2.1"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
@@ -778,7 +1116,9 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
             if parsed.path == "/health":
-                return self._json(self.engine.health())
+                health = self.engine.health()
+                health["clients"] = self.server.client_registry.count()
+                return self._json(health)
             if parsed.path == "/api/state":
                 return self._json(self.engine.state())
             if parsed.path == "/api/job":
@@ -806,8 +1146,26 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             body = self._body()
+            if parsed.path == "/api/client/register":
+                count = self.server.client_registry.register(
+                    body["client_token"], body["parent_pid"]
+                )
+                return self._json({"ok": True, "clients": count})
+            if parsed.path == "/api/client/release":
+                count = self.server.client_registry.release(body["client_token"])
+                self._json({"ok": True, "clients": count})
+                if count == 0:
+                    threading.Thread(
+                        target=shutdown_if_unused,
+                        args=(self.server, self.server.client_registry),
+                        daemon=True,
+                    ).start()
+                return
             routes = {
-                "/api/load": lambda: self.engine.load_media(body["path"]),
+                "/api/load": lambda: self.engine.load_media(
+                    body["path"], body.get("source_start"), body.get("source_end"),
+                    body.get("source_fps"), body.get("source_native_fps"),
+                ),
                 "/api/settings": lambda: self.engine.update_settings(body),
                 "/api/points": lambda: self.engine.add_point(body),
                 "/api/points/undo": self.engine.undo_point,
@@ -841,13 +1199,25 @@ def main():
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--mock", action="store_true", default=os.environ.get("SAMOSA_MOCK") == "1")
+    parser.add_argument("--parent-pid", type=int, default=None)
+    parser.add_argument("--client-token", default=None)
     args = parser.parse_args()
     if not args.repo:
         parser.error("--repo or SAMMIE_REPO is required")
     Handler.engine = Engine(Path(args.repo), mock=args.mock)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.client_registry = ClientRegistry()
+    if args.parent_pid:
+        server.client_registry.register(
+            args.client_token or ("parent-%d" % args.parent_pid), args.parent_pid
+        )
     print("Samosa AE service listening on http://%s:%d" % (args.host, args.port), flush=True)
-    server.serve_forever()
+    watchdog = start_client_watchdog(server, server.client_registry)
+    try:
+        server.serve_forever()
+    finally:
+        watchdog[0].set()
+        server.server_close()
 
 
 if __name__ == "__main__":

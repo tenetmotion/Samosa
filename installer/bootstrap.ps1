@@ -206,8 +206,16 @@ try {
         if (-not (Test-Path -LiteralPath $UvExe)) {
             Write-Host "Installing isolated uv runtime..."
             $env:UV_INSTALL_DIR = Join-Path $RuntimeRoot ".uv"
-            $InstallerScript = (Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing).Content
-            & ([scriptblock]::Create($InstallerScript))
+            $UvInstallerScriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("samosa-uv-install-{0}.ps1" -f ([Guid]::NewGuid().ToString("N")))
+            try {
+                Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -OutFile $UvInstallerScriptPath -UseBasicParsing
+                & (Join-Path $PSScriptRoot "invoke-utf8-script.ps1") -Path $UvInstallerScriptPath
+            }
+            finally {
+                if (Test-Path -LiteralPath $UvInstallerScriptPath) {
+                    Remove-Item -LiteralPath $UvInstallerScriptPath -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
         if (-not (Test-Path -LiteralPath $UvExe)) { throw "uv installation did not produce $UvExe" }
         $env:UV_PYTHON_INSTALL_DIR = Join-Path $RuntimeRoot ".uv\python"
@@ -249,7 +257,7 @@ try {
     New-Item -ItemType Junction -Path $CepTarget -Target $CepRoot | Out-Null
 
     $InstallState = [ordered]@{
-        version = "1.2.0"
+        version = "1.2.1"
         installed_at = (Get-Date).ToUniversalTime().ToString("o")
         backend = $Backend
         install_mode = $InstallMode

@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "installer" / "bootstrap.ps1"
 MAC_BOOTSTRAP = ROOT / "installer" / "macos" / "bootstrap.sh"
+UTF8_RUNNER = ROOT / "installer" / "invoke-utf8-script.ps1"
 
 
 class InstallerContractTests(unittest.TestCase):
@@ -70,6 +71,38 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("from sammie.model_downloader import MODEL_REGISTRY", code)
         self.assertIn("Checksum mismatch", code)
         self.assertIn(".part", code)
+
+    def test_uv_installer_script_uses_explicit_utf8_file_decode(self):
+        code = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertNotRegex(code, r"Invoke-WebRequest[^\r\n]*\.Content")
+        self.assertIn("Invoke-WebRequest -Uri \"https://astral.sh/uv/install.ps1\" -OutFile", code)
+        self.assertIn("invoke-utf8-script.ps1", code)
+        runner = UTF8_RUNNER.read_text(encoding="utf-8")
+        self.assertIn("[System.IO.File]::ReadAllText", runner)
+        self.assertIn("System.Text.UTF8Encoding($false)", runner)
+        self.assertIn("finally", code)
+        self.assertIn("Remove-Item -LiteralPath $UvInstallerScriptPath", code)
+
+    @unittest.skipUnless(platform.system() == "Windows", "Windows PowerShell 5.1 regression")
+    def test_utf8_runner_executes_utf8_script_text(self):
+        powershell = shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is unavailable")
+        with tempfile.TemporaryDirectory(prefix="samosa-utf8-") as folder:
+            payload = Path(folder) / "payload.ps1"
+            payload.write_bytes(
+                "$marker = '\u2713'; if ($marker.Length -ne 1) { throw 'bad decode' }; "
+                "Write-Output 'SAMOSA_UTF8_OK'".encode("utf-8")
+            )
+            result = subprocess.run(
+                [
+                    powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", str(UTF8_RUNNER), "-Path", str(payload),
+                ],
+                text=True, capture_output=True, timeout=15,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SAMOSA_UTF8_OK", result.stdout)
 
     def test_standard_on_demand_behavior_is_documented_and_wired(self):
         docs = (ROOT / "docs" / "MODELS.md").read_text(encoding="utf-8")

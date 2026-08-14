@@ -7,6 +7,7 @@
   var fs = nodeRequire("fs");
   var path = nodeRequire("path");
   var os = nodeRequire("os");
+  var crypto = nodeRequire("crypto");
   var child = nodeRequire("child_process");
   var http = nodeRequire("http");
   function normalizeCepPath(value) {
@@ -21,6 +22,24 @@
   var configText = fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "");
   var config = JSON.parse(configText);
   var baseUrl = "http://127.0.0.1:" + config.port;
+  var serviceScript = path.join(extensionPath, "backend", "service.py");
+  var clientToken = crypto.randomBytes(16).toString("hex");
+  var serviceRegistered = false;
+
+  function normalizeRepo(value) {
+    var normalized = normalizeCepPath(value);
+    if (!normalized) return "";
+    try { normalized = path.resolve(normalized); } catch (e) {}
+    normalized = path.normalize(normalized).replace(/[\\/]+/g, path.sep);
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  }
+
+  function localBackendSha256() {
+    return crypto.createHash("sha256").update(fs.readFileSync(serviceScript)).digest("hex").toLowerCase();
+  }
+
+  var expectedBackendSha256 = localBackendSha256();
+  var expectedRepo = normalizeRepo(config.repo);
   var runtimeLogDir = process.platform === "darwin"
     ? path.join(os.homedir(), "Library", "Logs", "Samosa")
     : path.join(process.env.APPDATA || os.homedir(), "Samosa");
@@ -40,6 +59,16 @@
 
   function el(id) { return document.getElementById(id); }
   function number(id) { return Number(el(id).value); }
+  function finiteNumber(value, fallback) {
+    var parsed = Number(value);
+    return isFinite(parsed) ? parsed : fallback;
+  }
+  function frameAtSourceTime(seconds, fps) {
+    var product = finiteNumber(seconds, 0) * finiteNumber(fps, 0);
+    var nearest = Math.round(product);
+    if (Math.abs(product - nearest) <= 1e-7) product = nearest;
+    return Math.floor(product);
+  }
   function log(message) {
     try { fs.appendFileSync(runtimeLog, new Date().toISOString() + " " + message + "\r\n"); } catch (e) {}
   }
@@ -152,30 +181,102 @@
   }
   function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
+  function serviceMatches(health) {
+    if (!health || health.service !== "samosa-ae") return false;
+    if (normalizeRepo(health.repo) !== expectedRepo) return false;
+    if (!health.backend_sha256) return false;
+    return String(health.backend_sha256).toLowerCase() === expectedBackendSha256;
+  }
+
+  async function shutdownService(reason) {
+    log("Shutting down " + reason + " service");
+    try { await api("POST", "/shutdown", {}); } catch (e) { log("Shutdown request failed: " + e.message); }
+    for (var i = 0; i < 20; i++) {
+      await sleep(150);
+      try { await api("GET", "/health"); } catch (e2) { return; }
+    }
+    throw new Error("The stale Samosa service did not shut down");
+  }
+
+  async function registerServiceClient() {
+    await api("POST", "/api/client/register", {
+      client_token: clientToken,
+      parent_pid: process.pid
+    });
+    serviceRegistered = true;
+  }
+
+  function releaseServiceClient() {
+    if (!serviceRegistered) return;
+    serviceRegistered = false;
+    var payload = JSON.stringify({ client_token: clientToken });
+    try {
+      if (navigator && typeof navigator.sendBeacon === "function" &&
+          navigator.sendBeacon(baseUrl + "/api/client/release", payload)) {
+        return;
+      }
+    } catch (beaconError) {
+      log("Service client beacon release failed: " + beaconError.message);
+    }
+    try {
+      var request = new XMLHttpRequest();
+      request.open("POST", baseUrl + "/api/client/release", false);
+      request.setRequestHeader("Content-Type", "application/json");
+      request.send(payload);
+    } catch (e) { log("Service client release on panel close failed: " + e.message); }
+  }
+
   async function ensureService() {
     log("Checking service at " + baseUrl);
+    var existingHealth = null;
     try {
-      var health = await api("GET", "/health");
-      log("Service already running on " + health.device);
-      setStatus("Processing service connected");
-      return;
-    } catch (e) { log("Initial health check failed: " + e.message); }
+      existingHealth = await api("GET", "/health");
+    } catch (e) {
+      log("Initial health check failed: " + e.message);
+    }
+    if (existingHealth) {
+      if (serviceMatches(existingHealth)) {
+        log("Service already running on " + existingHealth.device);
+        try {
+          await registerServiceClient();
+          setStatus("Processing service connected");
+          return;
+        } catch (registerError) {
+          log("Existing service disappeared during client registration: " + registerError.message);
+          existingHealth = null;
+        }
+      }
+      if (existingHealth && existingHealth.service !== "samosa-ae") {
+        throw new Error("Port " + config.port + " is already used by another service.");
+      }
+      if (existingHealth) await shutdownService("stale");
+    }
     setStatus("Starting processing service...", "");
-    var script = path.join(extensionPath, "backend", "service.py");
     var logDir = runtimeLogDir;
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     var out = fs.openSync(path.join(logDir, "service.log"), "a");
     var spawnEnv = Object.assign({}, process.env, config.environment || {});
-    var proc = child.spawn(config.python, [script, "--repo", config.repo, "--port", String(config.port)], {
-      cwd: config.repo, detached: true, windowsHide: true, stdio: ["ignore", out, out], env: spawnEnv
-    });
+    var spawnArgs = [
+      serviceScript, "--repo", config.repo, "--port", String(config.port),
+      "--parent-pid", String(process.pid), "--client-token", clientToken
+    ];
+    var proc;
+    try {
+      proc = child.spawn(config.python, spawnArgs, {
+        cwd: config.repo, detached: true, windowsHide: true, stdio: ["ignore", out, out], env: spawnEnv
+      });
+    } finally {
+      try { fs.closeSync(out); } catch (closeError) {}
+    }
     proc.on("error", function (error) { log("Service spawn error: " + error.message); });
     proc.unref();
     for (var i = 0; i < 60; i++) {
       await sleep(500);
       try {
-        await api("GET", "/health");
+        var spawnedHealth = await api("GET", "/health");
+        if (!serviceMatches(spawnedHealth)) throw new Error("Spawned service identity does not match this panel");
         log("Spawned service is healthy");
+        serviceRegistered = true;
         setStatus("Processing service connected");
         return;
       } catch (e2) {}
@@ -272,12 +373,26 @@
       var raw = await evalHost("$._samosaAE.getSelectedLayerInfo()");
       var info = JSON.parse(raw);
       if (!info.ok) throw new Error(info.error);
+      var sourceStart = finiteNumber(info.sourceStart, 0);
+      var sourceEnd = finiteNumber(info.sourceEnd, 0);
+      var sourceFps = finiteNumber(info.sourceFrameRate, 0);
+      var sourceNativeFps = finiteNumber(info.sourceNativeFrameRate, 0);
+      if (!(sourceEnd > sourceStart)) throw new Error("The selected layer has no positive source-time range.");
       selectedLayer = info;
       el("clipName").textContent = info.layerName;
       setDefaultOutputName(info.sourceName || info.path);
       setStatus("Decoding " + info.sourceName + "...");
-      state = await api("POST", "/api/load", { path: info.path });
-      frame = Math.max(0, Math.min(state.total_frames - 1, Math.round(info.sourceTime * state.fps)));
+      var loadPayload = { path: info.path, source_start: sourceStart, source_end: sourceEnd };
+      if (sourceFps > 0) loadPayload.source_fps = sourceFps;
+      if (sourceNativeFps > 0) loadPayload.source_native_fps = sourceNativeFps;
+      state = await api("POST", "/api/load", loadPayload);
+      state.source_start_time = finiteNumber(state.source_start_time, sourceStart);
+      state.source_end_time = finiteNumber(state.source_end_time, sourceEnd);
+      state.source_start_frame = finiteNumber(
+        state.source_start_frame, frameAtSourceTime(sourceStart, state.fps)
+      );
+      frame = frameAtSourceTime(info.sourceTime, state.fps) - state.source_start_frame;
+      frame = Math.max(0, Math.min(state.total_frames - 1, frame));
       renderState();
       setStatus("Loaded " + state.total_frames + " frames");
     } catch (e) { setStatus(e.message, "error"); }
@@ -333,7 +448,11 @@
   async function importOutput(result) {
     latestOutput = result;
     var referenceIndex = selectedLayer ? selectedLayer.layerIndex : -1;
-    var raw = await evalHost("$._samosaAE.importResult(" + escapeJs(result.path) + "," + (result.sequence ? "true" : "false") + "," + referenceIndex + ")");
+    var resultFps = finiteNumber(result && result.fps, finiteNumber(state && state.fps, 0));
+    var resultTrimmed = result && result.trimmed !== undefined
+      ? (result.trimmed === true || result.trimmed === 1 || result.trimmed === "true")
+      : !!(state && state.trimmed);
+    var raw = await evalHost("$._samosaAE.importResult(" + escapeJs(result.path) + "," + (result.sequence ? "true" : "false") + "," + referenceIndex + "," + resultFps + "," + (resultTrimmed ? "true" : "false") + ")");
     var response = JSON.parse(raw);
     if (!response.ok) throw new Error(response.error);
     setStatus("Added " + response.layerName + " to comp");
@@ -403,6 +522,7 @@
     el("chooseExportDestination").onclick = chooseExportDestination;
     el("clearExportDestination").onclick = function () { setExportDestination(""); setStatus("Using default export folder"); };
     el("cancelJob").onclick = function () { if (activeJob) api("POST", "/api/job/cancel", { id: activeJob.id }); };
+    window.addEventListener("beforeunload", releaseServiceClient, false);
     el("revealOutput").onclick = function () {
       if (!latestOutput) return;
       if (process.platform === "darwin") child.spawn("open", ["-R", latestOutput.path], { detached: true });

@@ -41,8 +41,8 @@ Samosa installers do not embed model weights or Adobe SDK files. They download a
 
 Download the installer for your platform from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest):
 
-- Windows: `Samosa-Setup-1.2.0.exe`
-- macOS: `Samosa-1.2.0-macOS.pkg`
+- Windows: `Samosa-Setup-1.2.1.exe`
+- macOS: `Samosa-1.2.1-macOS.pkg`
 
 Both installers create a local runtime and configure the After Effects CEP panel. See [Windows installation](docs/INSTALL.md) or [macOS installation](docs/INSTALL_MACOS.md).
 
@@ -73,6 +73,7 @@ Run the source-only contract suite with any Python 3.10+ interpreter:
 
 ```powershell
 python -m unittest discover -s tests -v
+node tests/test_panel_runtime.js
 ```
 
 Set `SAMMIE_REPO` and run with the upstream virtual environment to include the deterministic integration suite:
