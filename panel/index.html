@@ -24,6 +24,7 @@
     <section class="viewer-shell">
       <div id="viewerEmpty" class="viewer-empty"><div><span>No footage</span><p>Select a file-backed footage layer, then load it.</p></div></div>
       <canvas id="viewer" width="640" height="360" aria-label="Interactive footage viewer"></canvas>
+      <div id="promptBoxOverlay" class="prompt-box-overlay hidden" aria-hidden="true"></div>
       <button id="viewerScale" class="viewer-scale" title="Change viewer size" aria-label="Change viewer size">100%</button>
       <div class="viewer-badge" id="viewerBadge">SOURCE</div>
     </section>
@@ -60,7 +61,27 @@
       <details open>
         <summary><span>Segmentation</span><i aria-hidden="true">&#9662;</i></summary>
         <div class="form-grid">
-          <label>Model<select id="samModel"><option value="Base">SAM2 Base</option><option value="Large">SAM2 Large</option><option value="Efficient">EfficientTAM</option></select></label>
+          <label>Model<select id="samModel"><option value="Base">SAM2 Base</option><option value="Large">SAM2 Large</option><option value="Efficient">EfficientTAM</option><option value="SAM3.1">SAM 3.1</option></select></label>
+          <div id="sam3Controls" class="sam3-controls hidden span">
+            <div class="prompt-modes" id="sam3PromptModes" role="group" aria-label="SAM 3.1 prompt mode">
+              <button type="button" data-prompt-mode="point" class="selected">Point</button>
+              <button type="button" data-prompt-mode="box">Box</button>
+              <button type="button" data-prompt-mode="text">Text</button>
+              <button type="button" data-prompt-mode="example">Example</button>
+            </div>
+            <p id="sam3PromptHint" class="sam3-hint">Click to add an include or exclude point.</p>
+            <div id="sam3TextPrompt" class="sam3-text-prompt hidden">
+              <label for="sam3TextInput">Text prompt
+                <span class="sam3-text-entry"><input id="sam3TextInput" type="text" autocomplete="off" placeholder="Describe an object"><button id="sam3TextSubmit" type="button">Submit</button></span>
+              </label>
+            </div>
+            <div id="sam3Setup" class="sam3-setup hidden">
+              <div class="sam3-setup-copy"><strong id="sam3SetupTitle">SAM 3.1 is not installed</strong><span id="sam3SetupReason">Install the gated model to enable prompts.</span></div>
+              <button id="sam3AccessPage" type="button">Open access page</button>
+              <label class="sam3-license-check"><input id="sam3LicenseAccepted" type="checkbox"><span>I accept the Meta SAM License and Hugging Face has granted this account model access.</span></label>
+              <div class="sam3-token-entry"><input id="sam3Token" type="password" autocomplete="off" placeholder="Token from approved account" aria-label="Hugging Face token"><button id="sam3Install" type="button" class="primary">Install</button></div>
+            </div>
+          </div>
           <label>Grow<input id="grow" type="number" min="-20" max="20" value="0"></label>
           <label>Remove holes<input id="holes" type="number" min="0" max="100000" value="0"></label>
           <label>Remove dots<input id="dots" type="number" min="0" max="100000" value="0"></label>

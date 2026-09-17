@@ -11,6 +11,21 @@ The Samosa viewer is interactive. Use its timeline controls to move through sour
 
 ## Select and track objects
 
+Choose a segmentation model first. **SAM2 Base**, **SAM2 Large**, and **EfficientTAM** use point prompts and work through the regular Sammie runtime. **SAM 3.1** is optional and currently requires Windows with an NVIDIA CUDA backend.
+
+For SAM 3.1, request access on the linked Hugging Face page. In Samosa, acknowledge the Meta SAM License, enter a Hugging Face read token, and choose **Install**. The token is used only by the setup process and is not saved. The gated checkpoint is roughly 3.5 GB, and the isolated environment requires additional disk space.
+
+SAM 3.1 exposes four prompt modes:
+
+| Mode | Interaction |
+| --- | --- |
+| Point | Click for an Include point; right-click or choose Exclude for a negative point. Additional points refine the same object. |
+| Box | Drag one positive box around the object. |
+| Text | Describe an object and choose Submit. Detected instances become separate Samosa objects. |
+| Example | Drag Include and Exclude example boxes; multiple examples refine the request. |
+
+After submitting any prompt, use **Track objects** to propagate its masks through the loaded trim. The resulting masks use the same downstream matting, removal, and output workflow as SAM 2.1.
+
 1. Stay in **Object** mode and choose **Include**.
 2. Click inside the subject. Add a few well-spaced points when one point is insufficient.
 3. Choose **Exclude**, or right-click the viewer, to remove unwanted regions from the mask.

@@ -4,7 +4,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Platforms: Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555.svg)](docs/INSTALL.md)
 
-Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a local [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
+Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a local [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime, with optional isolated [SAM 3.1](https://github.com/facebookresearch/sam3) support, so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
 
 Samosa is an independent integration project. It is not an official Sammie-Roto-2 project and is not affiliated with or endorsed by Adobe.
 
@@ -19,7 +19,8 @@ The current release targets Windows and macOS with After Effects 2021 or newer t
 ## Features
 
 - Multiple objects with include and exclude point prompts
-- SAM2 selection and clip-wide object tracking
+- SAM 2.1 selection and clip-wide object tracking on Windows and macOS
+- Optional SAM 3.1 point, box, text, and positive/negative example prompts on Windows NVIDIA
 - MatAnyone, MatAnyone2, and VideoMaMa matting adapters
 - MiniMax and OpenCV removal adapters
 - Mask cleanup, growth, antialiasing, and duplicate-frame controls
@@ -34,6 +35,7 @@ The current release targets Windows and macOS with After Effects 2021 or newer t
 - Internet access during runtime and model installation
 - Windows: a supported NVIDIA, Intel, or CPU backend
 - macOS: Apple Silicon MPS acceleration or Intel CPU processing
+- SAM 3.1: Windows, an NVIDIA CUDA backend, accepted gated model access, and a Hugging Face read token
 
 Samosa installers do not embed model weights or Adobe SDK files. They download a pinned Sammie-Roto-2 source revision, Python runtime, and selected checkpoints during installation or first use.
 
@@ -41,16 +43,18 @@ Samosa installers do not embed model weights or Adobe SDK files. They download a
 
 Download the installer for your platform from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest):
 
-- Windows: `Samosa-Setup-1.2.1.exe`
-- macOS: `Samosa-1.2.1-macOS.pkg`
+- Windows: `Samosa-Setup-1.3.0.exe`
+- macOS: `Samosa-1.3.0-macOS.pkg`
 
 Both installers create a local runtime and configure the After Effects CEP panel. See [Windows installation](docs/INSTALL.md) or [macOS installation](docs/INSTALL_MACOS.md).
 
 Choose one model mode:
 
-- **Standard:** installs SAM2 Base now; missing models download when first requested.
-- **Complete:** pre-downloads every supported model after the restricted-model license notice is accepted.
-- **Custom:** selects individual model packs to pre-download.
+- **Standard:** installs SAM2 Base now; missing Sammie model packs download when first requested.
+- **Complete:** pre-downloads every supported Sammie model after its license notices are accepted and can prepare SAM 3.1 on Windows NVIDIA.
+- **Custom:** selects individual model packs and can opt into SAM 3.1 on Windows NVIDIA.
+
+SAM 3.1 weights are gated and are never bundled by Samosa. After receiving access, select **SAM 3.1** in the panel, acknowledge the Meta SAM License, enter a Hugging Face read token, and choose **Install**. The token is passed only to the setup child process and is not written to configuration, state, or logs.
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
@@ -60,7 +64,7 @@ See [Model installation](docs/MODELS.md) for exactly what happens when Standard 
 
 1. Open a composition and select exactly one file-backed footage layer.
 2. Open **Window > Extensions (Legacy) > Samosa**, then choose **Load selection**.
-3. Click the viewer to add Include points; right-click or switch to Exclude to remove areas. Add another object when needed.
+3. With SAM 2.1, click the viewer to add Include points; right-click or switch to Exclude to remove areas. With SAM 3.1, choose Point, Box, Text, or Example prompting. Add another object when needed.
 4. Choose **Track objects**. Add correction points on problem frames and track again.
 5. Use **Matting** for refined alpha edges or **Remove** to fill the selected area.
 6. Under **Output**, choose the output description, object, format, and destination, then select **Export and add to comp**.
@@ -74,6 +78,7 @@ Run the source-only contract suite with any Python 3.10+ interpreter:
 ```powershell
 python -m unittest discover -s tests -v
 node tests/test_panel_runtime.js
+node tests/test_sam3_panel_runtime.js
 ```
 
 Set `SAMMIE_REPO` and run with the upstream virtual environment to include the deterministic integration suite:
@@ -89,7 +94,7 @@ See [Development](docs/DEVELOPMENT.md), [Architecture](docs/ARCHITECTURE.md), an
 
 Samosa source code is licensed under GPL-3.0. It directly integrates with the GPL-3.0 Sammie-Roto-2 runtime, so GPL-3.0 is the conservative and compatible release choice.
 
-Some optional engines exposed through Sammie-Roto-2 have separate noncommercial terms. In particular, MatAnyone uses the S-Lab noncommercial license, while MiniMax Remover and VideoMaMa use CC BY-NC 4.0. Installing or downloading those components does not grant commercial-use rights. Review [Third-Party Notices](THIRD_PARTY_NOTICES.md) before distributing Samosa or using those engines commercially.
+Some optional engines exposed through Sammie-Roto-2 have separate noncommercial terms. In particular, MatAnyone uses the S-Lab noncommercial license, MiniMax Remover uses CC BY-NC 4.0, and VideoMaMa code uses CC BY-NC 4.0 while its model dependencies have separate Stability AI terms. SAM 3.1 source and weights use the separate Meta SAM License and gated model terms. Installing or downloading any component does not grant rights beyond its own license. Review [Third-Party Notices](THIRD_PARTY_NOTICES.md) before distributing Samosa or using optional engines commercially.
 
 ## Upstream relationship
 
@@ -97,7 +102,7 @@ Samosa is maintained as a separate repository because it is an After Effects int
 
 ## Acknowledgements and connected projects
 
-Samosa exists because of the work in [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) by Zarxrax and contributors. The workflows it exposes connect to [SAM 2](https://github.com/facebookresearch/sam2), [EfficientTAM](https://github.com/yformer/EfficientTAM), [MatAnyone](https://github.com/pq-yang/MatAnyone), [MatAnyone2](https://github.com/pq-yang/MatAnyone2), [VideoMaMa](https://github.com/cvlab-kaist/VideoMaMa), and [MiniMax Remover](https://github.com/zibojia/MiniMax-Remover). Attribution here does not replace each project's license or model terms; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+Samosa exists because of the work in [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) by Zarxrax and contributors. The workflows it exposes connect to [SAM 2](https://github.com/facebookresearch/sam2), [SAM 3](https://github.com/facebookresearch/sam3), [EfficientTAM](https://github.com/yformer/EfficientTAM), [MatAnyone](https://github.com/pq-yang/MatAnyone), [MatAnyone2](https://github.com/pq-yang/MatAnyone2), [VideoMaMa](https://github.com/cvlab-kaist/VideoMaMa), and [MiniMax Remover](https://github.com/zibojia/MiniMax-Remover). Attribution here does not replace each project's license or model terms; see [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Contributing
 

@@ -108,6 +108,7 @@ input[type="checkbox"] { width: 14px; height: 14px; margin: 0; accent-color: var
   background: repeating-linear-gradient(45deg, rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px, transparent 1px, transparent 9px);
 }
 .viewer-shell canvas { position: relative; display: block; width: 100%; height: 100%; object-fit: contain; cursor: crosshair; z-index: 1; }
+.prompt-box-overlay { position: absolute; z-index: 2; pointer-events: none; border: 1px solid var(--orange); background: rgba(255,87,34,0.14); }
 .viewer-empty { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 32px; text-align: center; }
 .viewer-empty div { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .viewer-empty span { color: var(--muted); font: 10px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
@@ -202,6 +203,25 @@ details:not([open]) summary i { transform: rotate(-90deg); }
 .form-grid .check { min-height: 24px; flex-direction: row; align-items: center; gap: 8px; color: var(--text); font: 13px var(--body); letter-spacing: 0; text-transform: none; }
 .form-grid .check input { width: 14px; }
 .span { grid-column: 1 / -1; }
+.sam3-controls { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.prompt-modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.prompt-modes button { min-height: 28px; padding: 0 6px; border: 0; background: transparent; color: var(--tertiary); font-size: 11px; }
+.prompt-modes button.selected { background: var(--surface); color: var(--text); }
+.prompt-modes button:disabled { cursor: not-allowed; color: var(--muted); opacity: 0.6; }
+.sam3-hint { margin: 0; color: var(--tertiary); font-size: 11px; line-height: 1.35; }
+.sam3-text-prompt label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font: 500 10px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.sam3-text-entry, .sam3-token-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.sam3-text-entry input, .sam3-token-entry input { min-width: 0; }
+.sam3-text-entry button, .sam3-token-entry button { white-space: nowrap; }
+.sam3-text-entry button:disabled, .sam3-token-entry button:disabled { cursor: not-allowed; opacity: 0.5; }
+.sam3-setup { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding-top: 8px; border-top: 1px solid var(--line); }
+.sam3-setup-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sam3-setup-copy strong { color: var(--secondary); font-size: 12px; font-weight: 500; }
+.sam3-setup-copy span { overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; }
+.sam3-license-check { grid-column: 1 / -1; display: flex; flex-direction: row; align-items: flex-start; gap: 8px; color: var(--tertiary); font: 11px/1.35 var(--body); letter-spacing: 0; text-transform: none; }
+.sam3-license-check input { flex: 0 0 auto; margin-top: 1px; }
+.sam3-setup > .sam3-token-entry { grid-column: 1 / -1; }
+.sam3-setup > button { min-height: 28px; padding: 0 8px; font-size: 11px; }
 .path-selector { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
 .path-selector input { min-width: 0; color: var(--secondary) !important; font: 12px var(--mono) !important; }
 .path-selector input::placeholder { color: var(--muted); }
@@ -255,4 +275,6 @@ footer {
   .span { grid-column: auto; }
   .path-selector { grid-template-columns: 1fr 1fr; }
   .path-selector input { grid-column: 1 / -1; }
+  .sam3-setup { grid-template-columns: 1fr; }
+  .sam3-setup > button, .sam3-setup > .sam3-token-entry, .sam3-license-check { grid-column: auto; }
 }

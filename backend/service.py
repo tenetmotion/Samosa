@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import errno
 import hashlib
@@ -12,11 +13,13 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
 import traceback
 import uuid
+from collections import deque
 from dataclasses import asdict
 from fractions import Fraction
 from http import HTTPStatus
@@ -27,6 +30,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 43831
+VERSION = "1.3.0"
 _progress_context = threading.local()
 OUTPUT_TAGS = {
     "Segmentation-Alpha": "segmentation_alpha",
@@ -38,7 +42,24 @@ OUTPUT_TAGS = {
     "ObjectRemoval": "object_removal",
 }
 
-BACKEND_SHA256 = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
+BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+from sam3_bridge import Sam3Bridge, Sam3BridgeError
+
+
+def _backend_sha256():
+    digest = hashlib.sha256()
+    for name in ("service.py", "sam3_bridge.py", "sam3_worker.py"):
+        path = BACKEND_DIR / name
+        if path.is_file():
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+BACKEND_SHA256 = _backend_sha256()
 
 
 def _finite_seconds(value, name):
@@ -273,6 +294,8 @@ class Job:
         self.error = None
         self.created_at = time.time()
         self.cancelled = False
+        self.cancel_event = threading.Event()
+        self.process = None
 
     def payload(self):
         return {
@@ -298,7 +321,16 @@ class Engine:
         "object_names", "selected_object_id",
     }
 
-    def __init__(self, repo: Path, mock: bool = False):
+    def __init__(
+        self,
+        repo: Path,
+        mock: bool = False,
+        sam3_python=None,
+        sam3_repo=None,
+        sam3_checkpoint=None,
+        install_root=None,
+        backend=None,
+    ):
         self.repo = repo.resolve()
         self.mock = mock
         self.lock = threading.RLock()
@@ -311,9 +343,43 @@ class Engine:
         self.trimmed = False
         self.points = []
         self.sam_manager = None
+        self.sam3_bridge = None
+        self.sam3_session_id = None
+        self.sam3_prompts = []
+        self.sam3_object_ids = set()
+        self.sam3_install_job_id = None
         self.matting_manager = None
         self.removal_manager = None
+        inferred_root = (
+            self.repo.parent.parent
+            if self.repo.parent.name.lower() == "runtime"
+            else Path(__file__).resolve().parents[1]
+        )
+        self.install_root = Path(
+            install_root or os.environ.get("SAMOSA_INSTALL_ROOT") or inferred_root
+        ).resolve()
+        default_sam3_root = self.install_root / "runtime" / "SAM3.1"
+        default_sam3_python = (
+            default_sam3_root / ".venv" / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else default_sam3_root / ".venv" / "bin" / "python"
+        )
+        self.sam3_repo = Path(
+            sam3_repo or os.environ.get("SAMOSA_SAM3_REPO") or default_sam3_root
+        ).resolve()
+        self.sam3_python = Path(
+            sam3_python or os.environ.get("SAMOSA_SAM3_PYTHON") or default_sam3_python
+        ).resolve()
+        self.sam3_checkpoint = Path(
+            sam3_checkpoint
+            or os.environ.get("SAMOSA_SAM3_CHECKPOINT")
+            or default_sam3_root / "models" / "sam3.1_multiplex.pt"
+        ).resolve()
+        self.backend = str(backend or os.environ.get("SAMOSA_BACKEND") or "").lower()
         self._load_modules()
+        session_temp = Path(self.core.temp_dir).resolve()
+        self.sam3_transport_dir = session_temp / "sam3_transport"
+        self.sam3_frames_dir = session_temp / "sam3_frames"
 
     def _load_modules(self):
         if not self.repo.exists():
@@ -417,6 +483,104 @@ class Engine:
                 raise
         return True
 
+    def _install_state(self):
+        path = self.install_root / "install-state.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _selected_sam_model(self):
+        return str(self.settings_mgr.get_session_setting("sam_model", "Base"))
+
+    def sam3_status(self):
+        install_state = self._install_state()
+        backend = self.backend or str(install_state.get("backend") or "").lower()
+        windows = os.name == "nt"
+        nvidia_backend = backend in ("cu126", "cu130")
+        if windows and not backend and not self.mock:
+            try:
+                import torch
+                nvidia_backend = bool(torch.cuda.is_available())
+            except Exception:
+                nvidia_backend = False
+        elif windows and not backend and self.mock:
+            nvidia_backend = True
+        supported = windows and nvidia_backend
+        source_installed = (self.sam3_repo / "sam3" / "model_builder.py").is_file()
+        runtime_installed = self.sam3_python.is_file()
+        try:
+            weights_available = (
+                self.sam3_checkpoint.is_file()
+                and self.sam3_checkpoint.stat().st_size == 3502755717
+            )
+        except OSError:
+            weights_available = False
+        available = supported and source_installed and runtime_installed and weights_available
+        if not windows:
+            reason = "SAM 3.1 currently requires Windows with an NVIDIA CUDA backend."
+        elif not nvidia_backend:
+            reason = "SAM 3.1 requires the NVIDIA CUDA backend; SAM 2.1 remains available."
+        elif not source_installed or not runtime_installed:
+            reason = "Install the optional isolated SAM 3.1 runtime."
+        elif not weights_available:
+            reason = "Accept gated access and install the SAM 3.1 checkpoint."
+        else:
+            reason = ""
+        if available:
+            status = "ready"
+        elif not supported:
+            status = "unsupported"
+        elif source_installed and runtime_installed and not weights_available:
+            status = "weights-pending"
+        else:
+            status = "not-installed"
+        job = None
+        if self.sam3_install_job_id in self.jobs:
+            job = self.jobs[self.sam3_install_job_id].payload()
+        return {
+            "id": "SAM3.1",
+            "label": "SAM 3.1",
+            "supported": supported,
+            "available": available,
+            "availability": "ready" if available else "unavailable",
+            "status": status,
+            "reason": reason,
+            "source_installed": source_installed,
+            "runtime_installed": runtime_installed,
+            "weights_available": weights_available,
+            "source_revision": "660a5e9e1b8b4c02c0ad97229b88a09a6e4ff5b7",
+            "model_revision": "daa63191845a41281374e725f4c9e51c7a824460",
+            "gated": True,
+            "access_url": "https://huggingface.co/facebook/sam3.1",
+            "capabilities": {
+                "prompts": {
+                    "point": True, "box": True, "text": True, "example": True,
+                }
+            },
+            "job": job,
+        }
+
+    def models(self):
+        sam3 = self.sam3_status()
+        return {
+            "models": [
+                {
+                    "id": "Base", "label": "SAM2 Base", "available": True,
+                    "capabilities": {"prompts": {"point": True}},
+                },
+                {
+                    "id": "Large", "label": "SAM2 Large", "available": True,
+                    "capabilities": {"prompts": {"point": True}},
+                },
+                {
+                    "id": "Efficient", "label": "EfficientTAM", "available": True,
+                    "capabilities": {"prompts": {"point": True}},
+                },
+                sam3,
+            ]
+        }
+
     def health(self):
         device = "mock"
         cuda = False
@@ -427,7 +591,7 @@ class Engine:
         return {
             "ok": True,
             "service": "samosa-ae",
-            "version": "1.2.1",
+            "version": VERSION,
             "mock": self.mock,
             "repo": str(self.repo),
             "device": device,
@@ -549,9 +713,12 @@ class Engine:
             raise ApiError("Media file not found: %s" % source)
         requested_range = source_start is not None or source_end is not None
         with self.lock:
+            self._close_sam3_session()
             self._reset_dirs()
             self.points = []
             self.sam_manager = None
+            self.sam3_prompts = []
+            self.sam3_object_ids = set()
             self.matting_manager = None
             self.removal_manager = None
             self.settings_mgr.create_new_session(str(source))
@@ -634,6 +801,7 @@ class Engine:
     def state(self):
         settings = self.settings_mgr.session_settings
         object_ids = sorted({int(p["object_id"]) for p in self.points})
+        selected_model = self._selected_sam_model()
         tracked_frames = 0
         if os.path.isdir(self.core.mask_dir):
             tracked_frames = len([
@@ -656,7 +824,11 @@ class Engine:
             "points": list(self.points),
             "object_ids": object_ids,
             "settings": asdict(settings),
-            "segmentation_ready": self.sam_manager is not None,
+            "segmentation_ready": (
+                self.sam3_session_id is not None
+                if selected_model == "SAM3.1"
+                else self.sam_manager is not None
+            ),
             "tracking": {
                 "frames": tracked_frames,
                 "complete": bool(self.core.VideoInfo.total_frames and tracked_frames >= self.core.VideoInfo.total_frames),
@@ -667,8 +839,19 @@ class Engine:
         unknown = sorted(set(values) - self.SETTING_KEYS)
         if unknown:
             raise ApiError("Unsupported settings: %s" % ", ".join(unknown))
+        previous_model = self._selected_sam_model()
         for key, value in values.items():
             self.settings_mgr.set_session_setting(key, value)
+        selected_model = str(values.get("sam_model", previous_model))
+        if selected_model != previous_model:
+            self.sam_manager = None
+            self._close_sam3_session()
+            self.sam3_prompts = []
+            self.sam3_object_ids = set()
+            self.points = []
+            self.settings_mgr.save_points([])
+            if self.loaded_path:
+                self._clear_segmentation_masks()
         self.settings_mgr.save_session_settings()
         return self.state()
 
@@ -676,8 +859,490 @@ class Engine:
         if not self.loaded_path:
             raise ApiError("Load media first")
 
+    @staticmethod
+    def _unit_coordinate(value, name):
+        if isinstance(value, bool):
+            raise ApiError("%s must be between 0 and 1" % name)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ApiError("%s must be between 0 and 1" % name)
+        if not math.isfinite(number) or number < 0 or number > 1:
+            raise ApiError("%s must be between 0 and 1" % name)
+        return number
+
+    @staticmethod
+    def _prompt_label(value):
+        if isinstance(value, bool):
+            return "positive" if value else "negative"
+        label = str(value or "positive").strip().lower()
+        if label in ("positive", "include", "foreground", "1"):
+            return "positive"
+        if label in ("negative", "exclude", "background", "0"):
+            return "negative"
+        raise ApiError("Prompt label must be positive or negative")
+
+    def _clear_segmentation_masks(self):
+        if os.path.exists(self.core.mask_dir):
+            shutil.rmtree(self.core.mask_dir)
+        os.makedirs(self.core.mask_dir, exist_ok=True)
+
+    def _close_sam3_session(self):
+        if self.sam3_bridge and self.sam3_session_id:
+            try:
+                self.sam3_bridge.call(
+                    "close_session", {"session_id": self.sam3_session_id}, timeout=30
+                )
+            except Exception:
+                pass
+        self.sam3_session_id = None
+
+    def close(self):
+        self._close_sam3_session()
+        if self.sam3_bridge:
+            self.sam3_bridge.close()
+            self.sam3_bridge = None
+
+    def _prepare_sam3_frames(self):
+        """Create the JPEG sequence required by the official SAM 3.1 loader."""
+        frame_count = int(self.core.VideoInfo.total_frames)
+        if frame_count <= 0:
+            raise RuntimeError("SAM 3.1 requires at least one decoded frame")
+
+        expected_names = {"%05d.jpg" % index for index in range(frame_count)}
+        try:
+            existing_names = {
+                item.name for item in self.sam3_frames_dir.iterdir() if item.is_file()
+            }
+        except OSError:
+            existing_names = set()
+        if existing_names == expected_names:
+            return str(self.sam3_frames_dir.resolve())
+
+        staging = self.sam3_frames_dir.with_name(self.sam3_frames_dir.name + ".part")
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True, exist_ok=True)
+        quality_key = getattr(self.cv2, "IMWRITE_JPEG_QUALITY", 1)
+        try:
+            for index in range(frame_count):
+                source = Path(self.core.frames_dir) / ("%05d.png" % index)
+                image = self.cv2.imread(str(source), getattr(self.cv2, "IMREAD_COLOR", 1))
+                if image is None:
+                    raise RuntimeError(
+                        "Could not read decoded frame %d for SAM 3.1" % index
+                    )
+                target = staging / ("%05d.jpg" % index)
+                if not self.cv2.imwrite(str(target), image, [quality_key, 95]):
+                    raise RuntimeError(
+                        "Could not prepare decoded frame %d for SAM 3.1" % index
+                    )
+            if self.sam3_frames_dir.exists():
+                shutil.rmtree(self.sam3_frames_dir)
+            os.replace(str(staging), str(self.sam3_frames_dir))
+        except Exception:
+            if staging.exists():
+                shutil.rmtree(staging)
+            raise
+        return str(self.sam3_frames_dir.resolve())
+
+    def _ensure_sam3_session(self):
+        with self.lock:
+            return self._ensure_sam3_session_locked()
+
+    def _ensure_sam3_session_locked(self):
+        self._ensure_loaded()
+        if self.sam3_bridge is None:
+            status = self.sam3_status()
+            if not status["available"]:
+                raise ApiError(status["reason"] or "SAM 3.1 is not available", 409)
+            command = [
+                str(self.sam3_python), "-u", str(BACKEND_DIR / "sam3_worker.py"),
+                "--repo", str(self.sam3_repo),
+                "--checkpoint", str(self.sam3_checkpoint),
+                "--parent-pid", str(os.getpid()),
+            ]
+            self.sam3_bridge = Sam3Bridge(
+                command, cwd=str(self.sam3_repo), startup_timeout=30,
+                request_timeout=1800,
+            )
+            health = self.sam3_bridge.start()
+            if not health.get("sam3_available"):
+                reason = health.get("unavailable_reason") or "SAM 3.1 import failed"
+                self.sam3_bridge.close()
+                self.sam3_bridge = None
+                raise ApiError(reason, 409)
+        if not self.sam3_session_id:
+            self.sam3_session_id = uuid.uuid4().hex
+            self.sam3_transport_dir.mkdir(parents=True, exist_ok=True)
+            resource_path = self._prepare_sam3_frames()
+            try:
+                self.sam3_bridge.call(
+                    "start_session",
+                    {
+                        "session_id": self.sam3_session_id,
+                        "resource_path": resource_path,
+                        "mask_root": str(self.sam3_transport_dir.resolve()),
+                    },
+                    timeout=1800,
+                )
+            except Exception:
+                self.sam3_session_id = None
+                raise
+        return self.sam3_bridge
+
+    def _decode_sam3_array(self, value):
+        if isinstance(value, list):
+            return self.np.asarray(value)
+        if not isinstance(value, dict):
+            return self.np.asarray(value)
+        encoding = value.get("encoding")
+        if encoding not in ("raw", "base64"):
+            return self.np.asarray(value)
+        try:
+            dtype = self.np.dtype(value["dtype"])
+            shape = tuple(int(item) for item in value["shape"])
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("SAM 3.1 returned invalid array metadata")
+        if any(item < 0 for item in shape):
+            raise RuntimeError("SAM 3.1 returned invalid array dimensions")
+        if encoding == "raw":
+            path = Path(value.get("path", "")).resolve()
+            root = self.sam3_transport_dir.resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                raise RuntimeError("SAM 3.1 returned an unsafe transport path")
+            try:
+                data = path.read_bytes()
+            finally:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        else:
+            try:
+                data = base64.b64decode(value.get("data", ""), validate=True)
+            except (ValueError, TypeError):
+                raise RuntimeError("SAM 3.1 returned invalid base64 data")
+        expected = int(self.np.prod(shape, dtype=self.np.int64)) * dtype.itemsize
+        if len(data) != expected:
+            raise RuntimeError("SAM 3.1 returned a truncated array")
+        return self.np.frombuffer(data, dtype=dtype).reshape(shape)
+
+    @staticmethod
+    def _sam3_outputs(result):
+        current = result
+        for _ in range(4):
+            if not isinstance(current, dict):
+                return {}
+            if isinstance(current.get("outputs"), dict):
+                return current["outputs"]
+            if isinstance(current.get("result"), dict):
+                current = current["result"]
+                continue
+            return current
+        return {}
+
+    def _write_sam3_result(self, result, fallback_frame):
+        outputs = self._sam3_outputs(result)
+        masks_value = outputs.get("out_binary_masks")
+        if masks_value is None:
+            return []
+        masks = self._decode_sam3_array(masks_value)
+        if masks.size == 0:
+            object_ids = outputs.get("out_obj_ids")
+            if object_ids is not None and self._decode_sam3_array(object_ids).size:
+                raise RuntimeError("SAM 3.1 returned mismatched mask and object counts")
+            return []
+        while masks.ndim > 3 and masks.shape[1] == 1:
+            masks = masks[:, 0]
+        if masks.ndim == 2:
+            masks = masks[None, ...]
+        if masks.ndim != 3:
+            raise RuntimeError("SAM 3.1 returned masks with an unsupported shape")
+        object_ids = outputs.get("out_obj_ids")
+        object_ids = (
+            [int(item) for item in self._decode_sam3_array(object_ids).reshape(-1)]
+            if object_ids is not None
+            else list(range(masks.shape[0]))
+        )
+        if len(object_ids) != masks.shape[0]:
+            raise RuntimeError("SAM 3.1 returned mismatched mask and object counts")
+        frame_number = int(
+            result.get("frame_index", fallback_frame)
+            if isinstance(result, dict) else fallback_frame
+        )
+        if frame_number < 0 or frame_number >= self.core.VideoInfo.total_frames:
+            raise RuntimeError("SAM 3.1 returned an invalid frame index")
+        frame_dir = Path(self.core.mask_dir) / ("%05d" % frame_number)
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        for object_id, mask in zip(object_ids, masks):
+            encoded = (mask > 0).astype(self.np.uint8) * 255
+            if encoded.shape != (
+                self.core.VideoInfo.height, self.core.VideoInfo.width
+            ):
+                encoded = self.cv2.resize(
+                    encoded,
+                    (self.core.VideoInfo.width, self.core.VideoInfo.height),
+                    interpolation=self.cv2.INTER_NEAREST,
+                )
+            if not self.cv2.imwrite(str(frame_dir / ("%d.png" % object_id)), encoded):
+                raise RuntimeError("Could not save SAM 3.1 mask")
+        return object_ids
+
+    def _rebuild_sam3_point_records(self):
+        real = []
+        for prompt in self.sam3_prompts:
+            if prompt["type"] != "point":
+                continue
+            real.append({
+                "frame": prompt["frame"],
+                "object_id": prompt["object_id"],
+                "positive": prompt["label"] == "positive",
+                "x": int(round(prompt["x"] * max(0, self.core.VideoInfo.width - 1))),
+                "y": int(round(prompt["y"] * max(0, self.core.VideoInfo.height - 1))),
+            })
+        real_ids = {point["object_id"] for point in real}
+        synthetic = [
+            {
+                "frame": 0, "object_id": object_id, "positive": True,
+                "x": -1, "y": -1, "synthetic": True,
+            }
+            for object_id in sorted(self.sam3_object_ids - real_ids)
+        ]
+        self.points = real + synthetic
+        self.settings_mgr.save_points(self.points)
+
+    def _worker_prompt(self, prompt, history):
+        prompt_type = prompt["type"]
+        if prompt_type == "point":
+            matching = [
+                item for item in history
+                if item["type"] == "point"
+                and item["frame"] == prompt["frame"]
+                and item["object_id"] == prompt["object_id"]
+            ]
+            return {
+                "type": "point",
+                "points": [[item["x"], item["y"]] for item in matching],
+                "labels": [item["label"] for item in matching],
+            }
+        if prompt_type == "example":
+            return {
+                "type": "example",
+                "examples": [
+                    {
+                        "box": [item["x1"], item["y1"], item["x2"], item["y2"]],
+                        "label": item["label"],
+                    }
+                    for item in history if item["type"] == "example"
+                ],
+            }
+        if prompt_type == "box":
+            return {
+                "type": "box",
+                "box": [prompt["x1"], prompt["y1"], prompt["x2"], prompt["y2"]],
+                "label": "positive",
+            }
+        return {"type": "text", "text": prompt["text"]}
+
+    def _apply_sam3_prompt(self, prompt, record=True):
+        bridge = self._ensure_sam3_session()
+        prompt_type = prompt["type"]
+        previous_history = list(self.sam3_prompts)
+        history = list(previous_history)
+        reset_session = bool(previous_history) and (
+            prompt_type in ("text", "box")
+            or (
+                prompt_type == "example"
+                and any(item["type"] != "example" for item in previous_history)
+            )
+        )
+        if prompt_type in ("text", "box"):
+            history = [prompt]
+        elif prompt_type == "example":
+            history = [item for item in history if item["type"] == "example"]
+            history.append(prompt)
+        else:
+            history.append(prompt)
+        if reset_session:
+            bridge.call(
+                "reset_session", {"session_id": self.sam3_session_id}, timeout=30
+            )
+        if prompt_type in ("text", "box", "example"):
+            self._clear_segmentation_masks()
+            self.sam3_object_ids = set()
+        result = bridge.call(
+            "add_prompt",
+            {
+                "session_id": self.sam3_session_id,
+                "frame_index": prompt["frame"],
+                "obj_id": prompt["object_id"],
+                "prompt": self._worker_prompt(prompt, history),
+            },
+            timeout=1800,
+        )
+        object_ids = self._write_sam3_result(result, prompt["frame"])
+        if prompt_type in ("text", "box", "example"):
+            self.sam3_object_ids = set(object_ids)
+        else:
+            self.sam3_object_ids.update(object_ids or [prompt["object_id"]])
+        if record:
+            self.sam3_prompts = history
+        self._rebuild_sam3_point_records()
+        return object_ids
+
+    def sam3_prompt(self, payload):
+        self._ensure_loaded()
+        if self._selected_sam_model() != "SAM3.1":
+            raise ApiError("Select SAM 3.1 before using SAM 3.1 prompts")
+        prompt_type = str(payload.get("type") or "").strip().lower()
+        if prompt_type not in ("point", "box", "text", "example"):
+            raise ApiError("Unsupported SAM 3.1 prompt type")
+        frame = int(payload.get("frame", 0))
+        object_id = int(payload.get("object_id", 0))
+        if frame < 0 or frame >= self.core.VideoInfo.total_frames:
+            raise ApiError("Frame is outside the clip")
+        prompt = {"type": prompt_type, "frame": frame, "object_id": object_id}
+        if prompt_type == "point":
+            prompt.update(
+                x=self._unit_coordinate(payload.get("x"), "x"),
+                y=self._unit_coordinate(payload.get("y"), "y"),
+                label=self._prompt_label(payload.get("label")),
+            )
+        elif prompt_type in ("box", "example"):
+            prompt.update(
+                x1=self._unit_coordinate(payload.get("x1"), "x1"),
+                y1=self._unit_coordinate(payload.get("y1"), "y1"),
+                x2=self._unit_coordinate(payload.get("x2"), "x2"),
+                y2=self._unit_coordinate(payload.get("y2"), "y2"),
+                label="positive" if prompt_type == "box" else self._prompt_label(payload.get("label")),
+            )
+            if prompt["x2"] <= prompt["x1"] or prompt["y2"] <= prompt["y1"]:
+                raise ApiError("Prompt box must have positive width and height")
+        else:
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                raise ApiError("Text prompt must not be empty")
+            prompt["text"] = text
+        try:
+            object_ids = self._apply_sam3_prompt(prompt)
+        except Sam3BridgeError as exc:
+            raise ApiError(str(exc), 409)
+        return {"ok": True, "object_ids": object_ids, "state": self.state()}
+
+    @staticmethod
+    def _redact_token(message, token):
+        safe = str(message or "")
+        if token:
+            safe = safe.replace(token, "[redacted]")
+        return re.sub(r"hf_[A-Za-z0-9_-]+", "[redacted]", safe)
+
+    def setup_sam3(self, payload):
+        if not bool(payload.get("accept_license")):
+            raise ApiError("Accept the Meta SAM License before installing SAM 3.1")
+        token = str(payload.get("hf_token") or "").strip()
+        if not token:
+            raise ApiError("A Hugging Face token is required for gated SAM 3.1 access")
+        status = self.sam3_status()
+        if not status["supported"]:
+            raise ApiError(status["reason"], 409)
+        manager = self.install_root / "installer" / "manage-sam31.ps1"
+        if not manager.is_file():
+            raise ApiError("The SAM 3.1 setup tool is not installed", 409)
+        if self.sam3_install_job_id in self.jobs:
+            existing = self.jobs[self.sam3_install_job_id]
+            if existing.status in ("queued", "running"):
+                return existing.payload()
+        backend = self.backend or str(self._install_state().get("backend") or "cu130")
+
+        def run(job):
+            environment = os.environ.copy()
+            environment["HF_TOKEN"] = token
+            powershell = Path(
+                os.environ.get("SystemRoot", r"C:\Windows")
+            ) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            command = [
+                str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(manager), "-InstallRoot", str(self.install_root),
+                "-Backend", backend, "-Install", "-DownloadModel",
+                "-AcceptMetaSamLicense",
+            ]
+            job.message = "Preparing isolated SAM 3.1 runtime"
+            job.progress = 2
+            process = subprocess.Popen(
+                command,
+                cwd=str(self.install_root),
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            job.process = process
+            recent_output = deque(maxlen=40)
+            setup_error = None
+            try:
+                for line in process.stdout or ():
+                    safe = self._redact_token(line.strip(), token)
+                    if not safe:
+                        continue
+                    recent_output.append(safe)
+                    if safe.startswith("SAMOSA_SAM31 "):
+                        try:
+                            event = json.loads(safe[len("SAMOSA_SAM31 "):])
+                            name = event.get("event")
+                            if name == "started":
+                                job.message = "Downloading SAM 3.1 checkpoint"
+                                job.progress = max(job.progress, 20)
+                            elif name == "complete":
+                                job.message = "Verifying SAM 3.1 checkpoint"
+                                job.progress = max(job.progress, 95)
+                            elif name == "error":
+                                setup_error = self._redact_token(
+                                    event.get("message") or "SAM 3.1 setup failed", token
+                                ).strip()
+                                job.message = setup_error
+                        except (TypeError, ValueError):
+                            pass
+                    elif "Downloading pinned SAM 3.1 source" in safe:
+                        job.message = "Downloading pinned SAM 3.1 source"
+                        job.progress = max(job.progress, 5)
+                return_code = process.wait()
+            finally:
+                job.process = None
+                environment.pop("HF_TOKEN", None)
+            if job.cancelled:
+                return {"cancelled": True}
+            if return_code != 0:
+                diagnostic = " | ".join(list(recent_output)[-8:])
+                raise RuntimeError(setup_error or diagnostic or "SAM 3.1 setup failed")
+            if self.sam3_bridge:
+                self.sam3_bridge.close()
+                self.sam3_bridge = None
+                self.sam3_session_id = None
+            refreshed = self.sam3_status()
+            if not refreshed["available"]:
+                raise RuntimeError(refreshed["reason"] or "SAM 3.1 setup is incomplete")
+            return {
+                "available": True,
+                "source_revision": refreshed["source_revision"],
+                "model_revision": refreshed["model_revision"],
+            }
+
+        job = self._new_job("sam3 setup", run)
+        self.sam3_install_job_id = job["id"]
+        return job
+
     def _ensure_segmenter(self):
         self._ensure_loaded()
+        if self._selected_sam_model() == "SAM3.1":
+            self._ensure_sam3_session()
+            return
         if self.sam_manager is None:
             self.sam_manager = self.sammie_api.SamManager()
             if not self.mock:
@@ -703,6 +1368,17 @@ class Engine:
         self.cv2.imwrite(target, mask)
 
     def add_point(self, payload):
+        if self._selected_sam_model() == "SAM3.1":
+            width = max(1, int(self.core.VideoInfo.width) - 1)
+            height = max(1, int(self.core.VideoInfo.height) - 1)
+            return self.sam3_prompt({
+                "type": "point",
+                "frame": payload.get("frame", 0),
+                "object_id": payload.get("object_id", 0),
+                "x": float(payload["x"]) / width,
+                "y": float(payload["y"]) / height,
+                "label": "positive" if payload.get("positive", True) else "negative",
+            })["state"]
         self._ensure_segmenter()
         frame = int(payload.get("frame", 0))
         object_id = int(payload.get("object_id", 0))
@@ -726,6 +1402,12 @@ class Engine:
 
     def undo_point(self):
         self._ensure_loaded()
+        if self._selected_sam_model() == "SAM3.1":
+            if not self.sam3_prompts:
+                return self.state()
+            history = list(self.sam3_prompts[:-1])
+            self._replay_sam3_history(history)
+            return self.state()
         if not self.points:
             return self.state()
         removed = self.points.pop()
@@ -740,6 +1422,14 @@ class Engine:
 
     def clear_points(self):
         self._ensure_loaded()
+        if self._selected_sam_model() == "SAM3.1":
+            self._close_sam3_session()
+            self.sam3_prompts = []
+            self.sam3_object_ids = set()
+            self.points = []
+            self.settings_mgr.save_points([])
+            self._clear_segmentation_masks()
+            return self.state()
         self.points = []
         self.settings_mgr.save_points([])
         if os.path.exists(self.core.mask_dir):
@@ -751,6 +1441,9 @@ class Engine:
 
     def clear_tracking(self):
         self._ensure_loaded()
+        if self._selected_sam_model() == "SAM3.1":
+            self._replay_sam3_history(list(self.sam3_prompts))
+            return self.state()
         if os.path.exists(self.core.mask_dir):
             shutil.rmtree(self.core.mask_dir)
         os.makedirs(self.core.mask_dir, exist_ok=True)
@@ -763,6 +1456,16 @@ class Engine:
             for frame_number, object_id in keyed:
                 self._mock_mask(frame_number, object_id)
         return self.state()
+
+    def _replay_sam3_history(self, history):
+        self._close_sam3_session()
+        self._clear_segmentation_masks()
+        self.sam3_prompts = []
+        self.sam3_object_ids = set()
+        self.points = []
+        self.settings_mgr.save_points([])
+        for prompt in history:
+            self._apply_sam3_prompt(dict(prompt))
 
     def frame_png(self, frame: int, view: str, object_id=None):
         self._ensure_loaded()
@@ -817,9 +1520,9 @@ class Engine:
                     job.status = "complete"
                     job.message = "%s complete" % kind.capitalize()
             except Exception as exc:
-                job.status = "failed"
                 job.error = "%s\n%s" % (exc, traceback.format_exc())
                 job.message = str(exc)
+                job.status = "failed"
             finally:
                 _progress_context.job = None
 
@@ -835,6 +1538,13 @@ class Engine:
         if job_id not in self.jobs:
             raise ApiError("Job not found", 404)
         self.jobs[job_id].cancelled = True
+        self.jobs[job_id].cancel_event.set()
+        process = self.jobs[job_id].process
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
         NullProgressDialog.cancelled = True
         return self.jobs[job_id].payload()
 
@@ -842,6 +1552,37 @@ class Engine:
         self._ensure_segmenter()
 
         def run(job):
+            if self._selected_sam_model() == "SAM3.1":
+                if not self.sam3_prompts:
+                    raise ApiError("Add at least one SAM 3.1 prompt first")
+                self._clear_segmentation_masks()
+
+                def on_event(message):
+                    event = message.get("result", message)
+                    frame_number = int(
+                        event.get("frame_index", 0)
+                        if isinstance(event, dict) else 0
+                    )
+                    object_ids = self._write_sam3_result(event, frame_number)
+                    self.sam3_object_ids.update(object_ids)
+                    self._rebuild_sam3_point_records()
+                    total = max(1, self.core.VideoInfo.total_frames)
+                    job.progress = max(
+                        job.progress, min(99, int((frame_number + 1) * 100 / total))
+                    )
+                    job.message = "Tracking frame %d of %d" % (
+                        frame_number + 1, total
+                    )
+
+                result = self.sam3_bridge.propagate(
+                    {"session_id": self.sam3_session_id},
+                    on_event=on_event,
+                    cancel_event=job.cancel_event,
+                    timeout=7200,
+                )
+                if result.get("cancelled"):
+                    job.cancelled = True
+                return {"frames": self.core.VideoInfo.total_frames}
             if self.mock:
                 source_masks = {}
                 for point in self.points:
@@ -1078,7 +1819,7 @@ class Engine:
 
 class Handler(BaseHTTPRequestHandler):
     engine = None
-    server_version = "SamosaAE/1.2.1"
+    server_version = "SamosaAE/" + VERSION
 
     def log_message(self, fmt, *args):
         sys.stdout.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
@@ -1121,6 +1862,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(health)
             if parsed.path == "/api/state":
                 return self._json(self.engine.state())
+            if parsed.path == "/api/models":
+                return self._json(self.engine.models())
+            if parsed.path == "/api/sam3/status":
+                return self._json(self.engine.sam3_status())
             if parsed.path == "/api/job":
                 return self._json(self.engine.get_job(query.get("id", [""])[0]))
             if parsed.path == "/api/frame":
@@ -1170,6 +1915,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/points": lambda: self.engine.add_point(body),
                 "/api/points/undo": self.engine.undo_point,
                 "/api/points/clear": self.engine.clear_points,
+                "/api/sam3/prompt": lambda: self.engine.sam3_prompt(body),
+                "/api/sam3/setup": lambda: self.engine.setup_sam3(body),
                 "/api/tracking/clear": self.engine.clear_tracking,
                 "/api/propagate": self.engine.propagate,
                 "/api/dedupe": lambda: self.engine.deduplicate(body.get("threshold", 0.8)),
@@ -1201,10 +1948,25 @@ def main():
     parser.add_argument("--mock", action="store_true", default=os.environ.get("SAMOSA_MOCK") == "1")
     parser.add_argument("--parent-pid", type=int, default=None)
     parser.add_argument("--client-token", default=None)
+    parser.add_argument("--install-root", default=os.environ.get("SAMOSA_INSTALL_ROOT"))
+    parser.add_argument("--backend", default=os.environ.get("SAMOSA_BACKEND"))
+    parser.add_argument("--sam3-python", default=os.environ.get("SAMOSA_SAM3_PYTHON"))
+    parser.add_argument("--sam3-repo", default=os.environ.get("SAMOSA_SAM3_REPO"))
+    parser.add_argument(
+        "--sam3-checkpoint", default=os.environ.get("SAMOSA_SAM3_CHECKPOINT")
+    )
     args = parser.parse_args()
     if not args.repo:
         parser.error("--repo or SAMMIE_REPO is required")
-    Handler.engine = Engine(Path(args.repo), mock=args.mock)
+    Handler.engine = Engine(
+        Path(args.repo),
+        mock=args.mock,
+        sam3_python=args.sam3_python,
+        sam3_repo=args.sam3_repo,
+        sam3_checkpoint=args.sam3_checkpoint,
+        install_root=args.install_root,
+        backend=args.backend,
+    )
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.client_registry = ClientRegistry()
     if args.parent_pid:
@@ -1217,6 +1979,7 @@ def main():
         server.serve_forever()
     finally:
         watchdog[0].set()
+        Handler.engine.close()
         server.server_close()
 
 

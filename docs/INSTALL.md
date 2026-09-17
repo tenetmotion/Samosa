@@ -1,153 +1,74 @@
 # Installing Samosa on Windows
 
-Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. The recommended online EXE installs the panel, downloads a pinned upstream runtime, and creates an isolated Python environment under one per-user installation root. The EXE does not embed third-party model weights.
-
-This guide covers Windows. For Apple Silicon and Intel Macs, use the [macOS installation guide](INSTALL_MACOS.md).
+Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Samosa v1.3.0 pins Sammie-Roto-2 v2.4.0 at commit `6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06` and installs it into an isolated runtime. The EXE does not embed third-party source, model weights, or Hugging Face credentials.
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10 or 11, x64
 - Adobe After Effects 2021 or newer
-- A supported GPU or CPU configuration for Sammie-Roto-2
-- Internet access during the initial Sammie-Roto-2 and model installation
-- A folder where your Windows account has write permission; do not install under `Program Files`
+- A supported Sammie-Roto-2 GPU or CPU configuration
+- Internet access during installation or first-use downloads
+- A writable per-user install folder; the default is `%LOCALAPPDATA%\Programs\Samosa`
 
-## Recommended: install with the EXE
+## EXE installation
 
-Download `Samosa-Setup-1.2.1.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum before running an unsigned build:
+Download `Samosa-Setup-1.3.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify an unsigned build with:
 
-```powershell
-Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.2.1.exe
-```
+~~~powershell
+Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.3.0.exe
+~~~
 
-The installer is per-user and does not require administrator access. Its default root is:
+Choose the backend matching the machine:
 
-```text
-%LOCALAPPDATA%\Programs\Samosa
-```
+| Backend | SAM 3.1 |
+| --- | --- |
+| NVIDIA CUDA 13.0 or 12.6 | Available |
+| Intel XPU or CPU | Unsupported |
 
-Choose the PyTorch backend matching the computer, then choose a model mode:
+Choose an installation mode:
 
-| Mode | Installed immediately | Later behavior |
-| --- | --- | --- |
-| Standard | SAM2 Base | Other models download automatically when first requested. |
-| Complete | Every registry model | No first-use model downloads for the current registry. |
-| Custom | Selected packs | Unselected models remain available on demand. |
+| Mode | Behavior |
+| --- | --- |
+| Standard | Installs SAM2 Base. Other Sammie packs remain on demand. SAM 3.1 is not installed. |
+| Complete | Installs all existing Sammie packs and can prepare SAM 3.1. |
+| Custom | Installs selected packs and can prepare SAM 3.1. |
 
-Complete and restricted Custom selections require acknowledgment that MatAnyone/MatAnyone2, VideoMaMa, MiniMax Remover, and VideoMaMa's SVD VAE dependency have additional or noncommercial terms. Review [Third-party notices](../THIRD_PARTY_NOTICES.md) before use.
-
-The installer downloads pinned Sammie-Roto-2 source, verifies its SHA-256, creates `.venv`, verifies model checksums, writes the CEP configuration, and creates a junction at Adobe's required extension path. Actual program/runtime files remain under the single Samosa root.
+SAM 3.1 is only available in Windows Complete or Custom with NVIDIA CUDA. The installer shows a separate Meta SAM License acknowledgment. Its hidden post-install step installs the pinned source and isolated environment, never requests or consumes a token, and records `weights-pending`. Finish the gated weight download from the Samosa panel or interactive manager.
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
-## Adding models after Standard installation
+## Gated SAM 3.1 weights
 
-No repair is required. Either use the missing model in Samosa and allow its first-use download, or open **Start > Samosa > Manage model packs** to pre-download it. Rerunning the EXE in Complete or Custom mode also adds packs while skipping models already present with valid checksums. See [Model installation](MODELS.md).
+1. Open the [facebook/sam3.1 model page](https://huggingface.co/facebook/sam3.1).
+2. Accept the displayed Meta terms and request/enable access for the Hugging Face account.
+3. Run the interactive manager after the EXE completes:
 
-## Source-based installation
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "$env:LOCALAPPDATA\Programs\Samosa\installer\manage-models.ps1" `
+  -InstallRoot "$env:LOCALAPPDATA\Programs\Samosa" -Sam31
+~~~
 
-The source installer remains available for developers and users who already maintain Sammie-Roto-2 separately.
+The manager reads `HF_TOKEN` from the current process or accepts a hidden token prompt. It passes the token only to the download process, removes it afterward, and never writes it to install state, configuration, logs, or command-line arguments. The model manager verifies the pinned revision, expected size, and SHA-256. Re-running it is idempotent.
 
-### 1. Install Sammie-Roto-2
+Gated access is granted to an individual Hugging Face account, not to an organization. Open the model page while signed into the same account that created the token, complete the Meta access form, and wait until access is granted before retrying. A general read token works after that account is approved; a fine-grained token must explicitly allow read access to `facebook/sam3.1`. A `403` stating that the user is not in the authorized list means the account-side access grant is still missing, not that the local Samosa runtime failed.
 
-Download the current source from the [Sammie-Roto-2 repository](https://github.com/Zarxrax/Sammie-Roto-2) and extract it, or clone it:
+Inspect SAM 3.1 state without downloading:
 
-```powershell
-git clone https://github.com/Zarxrax/Sammie-Roto-2.git
-cd .\Sammie-Roto-2
-```
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "$env:LOCALAPPDATA\Programs\Samosa\installer\manage-sam31.ps1" `
+  -InstallRoot "$env:LOCALAPPDATA\Programs\Samosa" -Status -AcceptMetaSamLicense
+~~~
 
-Run the upstream installer and select the option matching your hardware:
+## Existing model packs
 
-```powershell
-.\install.bat
-```
+Use Samosa's on-demand path or **Start > Samosa > Manage model packs**. Existing model files are downloaded to partial files, checksum-verified, atomically activated, and retained. Existing restricted model acknowledgments remain separate. See [Third-party notices](../THIRD_PARTY_NOTICES.md).
 
-The installer creates a local `.venv` and downloads the selected PyTorch runtime. Verify the standalone application before installing Samosa:
+## Updating and uninstalling
 
-```powershell
-.\run_sammie.bat
-```
-
-Open a short clip and confirm that the application starts and can load footage. You may then close it; Samosa uses the same environment and checkpoints through its own local service.
-
-### 2. Install the Samosa panel
-
-Download this repository's source and extract it to a permanent folder, or clone it:
-
-```powershell
-git clone https://github.com/tenetmotion/Samosa.git
-cd .\Samosa
-```
-
-In PowerShell, open that folder and pass the full Sammie-Roto-2 path to the installer:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -SammieRepo "D:\Apps\Sammie-Roto-2"
-```
-
-You can instead set `SAMMIE_REPO` and omit the parameter:
-
-```powershell
-$env:SAMMIE_REPO = "D:\Apps\Sammie-Roto-2"
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-The installer:
-
-- verifies the upstream checkout and `.venv`
-- installs `com.tenet.samosa.roto` under `%APPDATA%\Adobe\CEP\extensions`
-- writes a machine-local `config.json`
-- enables CEP debug mode for supported Adobe hosts
-- compiles the Python bridge as a startup check
-
-Restart After Effects, then open **Window > Extensions (Legacy) > Samosa**.
-
-## First-run verification
-
-1. Create or open a composition containing imported footage.
-2. Select one footage layer whose source is a local file.
-3. Open Samosa and choose **Load selection**.
-4. Wait for the footer to report that the GPU service is connected and the viewer to display the clip.
-5. Add one Include point. The first point may take longer while the selected model initializes or downloads.
-
-## Model licenses
-
-Samosa is GPL-3.0, but some optional engines are noncommercial. MatAnyone uses the S-Lab noncommercial license; VideoMaMa and MiniMax Remover use CC BY-NC 4.0. Installing a model does not grant commercial-use rights. Read [Third-party notices](../THIRD_PARTY_NOTICES.md) before production or commercial use.
-
-## Updating
-
-Run the newer EXE over the existing installation. It preserves already verified model files and only refreshes the pinned runtime when the supported upstream revision changes. Restart After Effects after every panel update.
-
-For source-based installations, pull or extract the new Samosa source over a clean folder, then rerun `install.ps1` with the same Sammie-Roto-2 path.
-
-Update Sammie-Roto-2 using its upstream instructions. Because Samosa integrates with upstream Python modules, review Samosa release notes before moving to a new incompatible upstream version.
-
-## Uninstalling
-
-Use **Windows Settings > Apps > Installed apps > Samosa > Uninstall** for EXE installations. This removes the CEP junction, runtime, environment, and downloaded checkpoints under the Samosa root. Exports stored elsewhere are not removed.
-
-For source-based installations:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
-```
-
-This removes only the Samosa CEP extension. It does not delete Sammie-Roto-2, checkpoints, exports, or footage.
+Run a newer EXE over the existing installation. Valid pinned source and checkpoints are retained; changed revisions are repaired. Use **Windows Settings > Apps > Installed apps > Samosa > Uninstall** to remove the Samosa root and CEP registration. Exports outside the root are not removed.
 
 ## Troubleshooting
 
-### The panel stays on Starting service
-
-- Confirm `Sammie-Roto-2\.venv\Scripts\python.exe` exists.
-- Rerun `install.ps1` with the correct `-SammieRepo` path.
-- Read `%APPDATA%\Samosa\service.log` and `%APPDATA%\Samosa\panel-runtime.log`.
-- If port `43831` is occupied, reinstall with another port: `-Port 43832`.
-
-### Load selection reports no compatible layer
-
-Select exactly one AV footage layer backed by a local media file. Solids, adjustment layers, nested compositions, generated layers, and offline media are not accepted by the current bridge.
-
-### More than one Samosa entry appears
-
-The active release uses extension ID `com.tenet.samosa.roto`. Remove older prototypes from `%APPDATA%\Adobe\CEP\extensions` only after confirming they are no longer needed.
+For `Starting service`, confirm `runtime\Sammie-Roto-2\.venv\Scripts\python.exe` exists and read `logs\installer.log` plus the service log. For `weights-pending`, confirm Hugging Face access is granted to the token's account, use the interactive manager, and provide `HF_TOKEN` or its hidden prompt. SAM 3.1 rejects CPU and XPU backends.

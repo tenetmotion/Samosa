@@ -15,7 +15,7 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(root.find(".//Type").text, "Panel")
         self.assertEqual(root.attrib["ExtensionBundleId"], "com.tenet.samosa.roto")
         self.assertEqual(root.attrib["ExtensionBundleName"], "Samosa")
-        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.2.1")
+        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.3.0")
         params = [node.text for node in root.findall(".//Parameter")]
         self.assertIn("--enable-nodejs", params)
 
@@ -26,6 +26,8 @@ class PluginContractTests(unittest.TestCase):
             "positiveTool", "negativeTool", "objectId", "propagate", "clearTracking", "trackingStatus", "runMatting",
             "runRemoval", "exportImport", "cancelJob", "samModel", "mattingModel", "deduplicate",
             "removalMethod", "outputFormat", "outputDestination", "chooseExportDestination", "clearExportDestination",
+            "sam3Controls", "sam3PromptModes", "sam3TextInput", "sam3Setup",
+            "sam3AccessPage", "sam3LicenseAccepted", "sam3Token", "sam3Install",
         }
         found = set(re.findall(r'id="([^"]+)"', html))
         self.assertFalse(required_ids - found, "Missing controls: %s" % sorted(required_ids - found))
@@ -114,7 +116,7 @@ class PluginContractTests(unittest.TestCase):
 
     def test_service_routes_cover_workflow(self):
         code = (ROOT / "backend" / "service.py").read_text(encoding="utf-8")
-        for route in ("/api/load", "/api/points", "/api/tracking/clear", "/api/propagate", "/api/dedupe", "/api/matting", "/api/removal", "/api/export", "/api/job/cancel"):
+        for route in ("/api/load", "/api/points", "/api/tracking/clear", "/api/propagate", "/api/dedupe", "/api/matting", "/api/removal", "/api/export", "/api/job/cancel", "/api/models", "/api/sam3/status", "/api/sam3/prompt", "/api/sam3/setup"):
             self.assertIn(route, code)
         self.assertIn('payload.get("output_dir"', code)
         for tag in ("segmentation_alpha", "segmentation_matte", "segmentation_bgcolor", "matting_alpha", "matting_matte", "matting_bgcolor", "object_removal"):
@@ -138,6 +140,14 @@ class PluginContractTests(unittest.TestCase):
     def test_generated_config_is_not_committed(self):
         self.assertFalse((ROOT / "panel" / "config.json").exists())
         self.assertTrue((ROOT / "panel" / "config.example.json").exists())
+
+    def test_development_install_preserves_optional_sam31_runtime(self):
+        installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        self.assertIn('[string]$InstallRoot', installer)
+        self.assertIn('Join-Path $env:LOCALAPPDATA "Programs\\Samosa"', installer)
+        self.assertIn('$PersistentInstaller = Join-Path $InstallRoot "installer"', installer)
+        self.assertIn('SAMOSA_INSTALL_ROOT = $InstallRoot', installer)
+        self.assertNotIn('SAMOSA_INSTALL_ROOT = $Target', installer)
 
     def test_release_packager_excludes_local_tool_caches(self):
         script = (ROOT / "scripts" / "package-release.ps1").read_text(encoding="utf-8")

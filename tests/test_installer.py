@@ -35,8 +35,8 @@ class InstallerContractTests(unittest.TestCase):
         self.assertEqual(plan["models"], ["Base"])
         self.assertFalse(plan["includes_restricted_models"])
         self.assertEqual(plan["backend"], "cu130")
-        self.assertEqual(plan["sammie_commit"], "129a0a54950d71b535cdcdbd06090c5583e293d9")
-        self.assertEqual(plan["sammie_archive_sha256"], "71CFC39AC389DA6C138E956881DEA1A811F473F63052FB026B8E24CFE28AF62B")
+        self.assertEqual(plan["sammie_commit"], "6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06")
+        self.assertEqual(plan["sammie_archive_sha256"], "829670BBDE1A92445DCF3D6716D94E35729974799B058C5169E17125A906BE59")
 
     def test_complete_plan_requires_acceptance_and_contains_all_models(self):
         rejected = self.dry_run("-InstallMode", "Complete", "-Models", "all", expect_success=False)

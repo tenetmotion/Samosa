@@ -28,6 +28,7 @@ Samosa model packs
   5  MatAnyone2 (noncommercial terms)
   6  VideoMaMa (restricted and separate SVD VAE terms)
   7  MiniMax Remover (noncommercial terms)
+  9  SAM 3.1 (unsupported on macOS; Windows NVIDIA only)
   A  All model packs
 EOF
   read -r -p "Select packs (comma-separated, for example 1,3): " choices
@@ -44,6 +45,7 @@ EOF
       5) keys+=(matanyone2) ;;
       6) keys+=(videomama svd_vae) ;;
       7) keys+=(minimax_transformer minimax_vae) ;;
+      9) echo "SAM 3.1 is unsupported on macOS. Use a Windows NVIDIA CUDA installation." >&2; exit 2 ;;
       A) keys=(Large Base Efficient matanyone matanyone2 minimax_transformer minimax_vae videomama svd_vae) ;;
       *) echo "Unknown selection: $choice" >&2; exit 2 ;;
     esac

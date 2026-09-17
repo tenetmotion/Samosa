@@ -8,6 +8,8 @@ param(
     [string]$InstallMode = "Standard",
     [string]$Models = "Base",
     [switch]$AcceptRestrictedModels,
+    [switch]$IncludeSam31,
+    [switch]$AcceptSam31License,
     [int]$Port = 43831,
     [switch]$DryRun,
     [switch]$Uninstall
@@ -16,9 +18,13 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$SammieCommit = "129a0a54950d71b535cdcdbd06090c5583e293d9"
+$SammieCommit = "6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06"
 $SammieArchiveUrl = "https://github.com/Zarxrax/Sammie-Roto-2/archive/$SammieCommit.zip"
-$SammieArchiveSha256 = "71CFC39AC389DA6C138E956881DEA1A811F473F63052FB026B8E24CFE28AF62B"
+$SammieArchiveSha256 = "829670BBDE1A92445DCF3D6716D94E35729974799B058C5169E17125A906BE59"
+$Sam31SourceCommit = "660a5e9e1b8b4c02c0ad97229b88a09a6e4ff5b7"
+$Sam31ModelRevision = "daa63191845a41281374e725f4c9e51c7a824460"
+$Sam31Checkpoint = "sam3.1_multiplex.pt"
+$Sam31CheckpointBytes = 3502755717
 $AllModelKeys = @(
     "Large", "Base", "Efficient", "matanyone", "matanyone2",
     "minimax_transformer", "minimax_vae", "videomama", "svd_vae"
@@ -113,6 +119,8 @@ $CepRoot = Join-Path $InstallRoot "cep"
 $StatePath = Join-Path $InstallRoot "install-state.json"
 $SelectedModelKeys = @(Resolve-ModelKeys)
 $IncludesRestrictedModels = Test-RestrictedSelection $SelectedModelKeys
+$Sam31Supported = $Backend -in @("cu130", "cu126")
+$Sam31Requested = [bool]$IncludeSam31
 
 if ($Uninstall) {
     Remove-CepRegistration
@@ -123,6 +131,15 @@ if ($IncludesRestrictedModels -and -not $AcceptRestrictedModels) {
     throw "Restricted model packs require explicit acceptance of their noncommercial license terms."
 }
 
+if ($Sam31Requested -and $InstallMode -eq "Standard") {
+    throw "SAM 3.1 is available only from Windows Complete or Custom installation. Standard remains lightweight."
+}
+if ($Sam31Requested -and -not $Sam31Supported) {
+    throw "SAM 3.1 requires a Windows NVIDIA CUDA backend (cu130 or cu126); it is not available for CPU or XPU installs."
+}
+if ($Sam31Requested -and -not $AcceptSam31License) {
+    throw "SAM 3.1 requires explicit acknowledgment of the Meta SAM License and gated model access terms."
+}
 $Plan = [ordered]@{
     install_root = $InstallRoot
     backend = $Backend
@@ -132,6 +149,13 @@ $Plan = [ordered]@{
     sammie_commit = $SammieCommit
     sammie_archive = $SammieArchiveUrl
     sammie_archive_sha256 = $SammieArchiveSha256
+    sam31_requested = $Sam31Requested
+    sam31_supported = $Sam31Supported
+    sam31_source_commit = $Sam31SourceCommit
+    sam31_model_revision = $Sam31ModelRevision
+    sam31_checkpoint = $Sam31Checkpoint
+    sam31_checkpoint_bytes = $Sam31CheckpointBytes
+    sam31_license_acknowledged = [bool]($Sam31Requested -and $AcceptSam31License)
     cep_extension_id = "com.tenet.samosa.roto"
     port = $Port
 }
@@ -192,6 +216,7 @@ try {
         Move-Item -LiteralPath $Extracted.FullName -Destination $RuntimeRoot
         Remove-Item -LiteralPath $ExtractRoot -Recurse -Force
         [System.IO.File]::WriteAllText($SourceMarker, (@{ commit = $SammieCommit; source = $SammieArchiveUrl } | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+        $RuntimeCurrent = $true
     }
 
     $PreviousState = $null
@@ -230,6 +255,15 @@ try {
         Invoke-Native $Python @($Downloader, "--repo", $RuntimeRoot, "--models", ($SelectedModelKeys -join ",")) $RuntimeRoot
     }
 
+    if ($Sam31Requested) {
+        $Sam31Manager = Join-Path $InstallRoot "installer\manage-sam31.ps1"
+        Invoke-Native (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe") @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Sam31Manager,
+            "-InstallRoot", $InstallRoot, "-Backend", $Backend, "-Install",
+            "-DownloadModel", "-NonInteractive", "-AcceptMetaSamLicense"
+        ) $InstallRoot
+    }
+
     if (-not (Test-Path -LiteralPath (Join-Path $CepRoot "index.html"))) {
         throw "Samosa CEP files were not installed to $CepRoot"
     }
@@ -241,9 +275,18 @@ try {
         repo = $RuntimeRoot
         python = $Python
         accepted_restricted_models = [bool]$AcceptRestrictedModels
+        sam31_runtime = Join-Path $InstallRoot "runtime\SAM3.1"
+        sam31_requested = $Sam31Requested
+        environment = @{
+            SAMOSA_INSTALL_ROOT = $InstallRoot
+            SAMOSA_CORE_RUNTIME = $RuntimeRoot
+            SAMOSA_BACKEND = $Backend
+        }
     } | ConvertTo-Json
     [System.IO.File]::WriteAllText((Join-Path $CepRoot "config.json"), $Config, (New-Object System.Text.UTF8Encoding($false)))
-    Invoke-Native $Python @("-m", "py_compile", (Join-Path $CepRoot "backend\service.py")) $RuntimeRoot
+    Get-ChildItem -LiteralPath $CepBackend -Filter "*.py" | ForEach-Object {
+        Invoke-Native $Python @("-m", "py_compile", $_.FullName) $RuntimeRoot
+    }
 
     foreach ($Version in 11..14) {
         $Key = "HKCU:\Software\Adobe\CSXS.$Version"
@@ -257,12 +300,23 @@ try {
     New-Item -ItemType Junction -Path $CepTarget -Target $CepRoot | Out-Null
 
     $InstallState = [ordered]@{
-        version = "1.2.1"
+        version = "1.3.0"
         installed_at = (Get-Date).ToUniversalTime().ToString("o")
         backend = $Backend
         install_mode = $InstallMode
         models_requested = $SelectedModelKeys
         sammie_commit = $SammieCommit
+        sammie_archive_sha256 = $SammieArchiveSha256
+        sam31 = [ordered]@{
+            requested = $Sam31Requested
+            supported = $Sam31Supported
+            source_commit = $Sam31SourceCommit
+            model_revision = $Sam31ModelRevision
+            checkpoint = $Sam31Checkpoint
+            checkpoint_bytes = $Sam31CheckpointBytes
+            checkpoint_sha256 = "0567DEBEEC80BA4AC6369540C6C248025283CB3FF2B92827509E57E2B3541CB6"
+            state_file = Join-Path $InstallRoot "runtime\SAM3.1\sam31-state.json"
+        }
         port = $Port
     }
     [System.IO.File]::WriteAllText($StatePath, ($InstallState | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))

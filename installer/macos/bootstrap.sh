@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-SAMMIE_COMMIT="129a0a54950d71b535cdcdbd06090c5583e293d9"
+SAMMIE_COMMIT="6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06"
 SAMMIE_ARCHIVE_URL="https://github.com/Zarxrax/Sammie-Roto-2/archive/${SAMMIE_COMMIT}.zip"
-SAMMIE_ARCHIVE_SHA256="71CFC39AC389DA6C138E956881DEA1A811F473F63052FB026B8E24CFE28AF62B"
+SAMMIE_ARCHIVE_SHA256="829670BBDE1A92445DCF3D6716D94E35729974799B058C5169E17125A906BE59"
 ALL_MODELS="Large,Base,Efficient,matanyone,matanyone2,minimax_transformer,minimax_vae,videomama,svd_vae"
 RESTRICTED_PATTERN='(^|,)(matanyone|matanyone2|minimax_transformer|minimax_vae|videomama|svd_vae)(,|$)'
 
@@ -14,6 +14,7 @@ INSTALL_MODE="Standard"
 MODELS="Base"
 PORT=43831
 ACCEPT_RESTRICTED=false
+SAM31_REQUESTED=false
 DRY_RUN=false
 UNINSTALL=false
 
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --mode) INSTALL_MODE="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
     --accept-restricted-models) ACCEPT_RESTRICTED=true; shift ;;
+    --sam31|--include-sam31) SAM31_REQUESTED=true; shift ;;
     --port) PORT="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --uninstall) UNINSTALL=true; shift ;;
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$INSTALL_MODE" in Standard|Complete|Custom) ;; *) echo "Invalid install mode: $INSTALL_MODE" >&2; exit 2 ;; esac
+if [[ "$SAM31_REQUESTED" == true ]]; then
+  echo "SAM 3.1 is unsupported on macOS. It requires a Windows NVIDIA CUDA runtime." >&2
+  exit 3
+fi
 MODELS_LOWER="$(printf '%s' "$MODELS" | tr '[:upper:]' '[:lower:]')"
 if [[ "$INSTALL_MODE" == "Complete" || "$MODELS_LOWER" == "all" ]]; then MODELS="$ALL_MODELS"; fi
 if [[ "$INSTALL_MODE" == "Standard" && -z "$MODELS" ]]; then MODELS="Base"; fi
@@ -84,7 +90,7 @@ if [[ "$DRY_RUN" == true ]]; then
     [[ -n "$model_json" ]] && model_json+=","
     model_json+="\"$model\""
   done
-  printf '{"install_root":"%s","platform":"macos","backend":"mps-or-cpu","install_mode":"%s","models":[%s],"includes_restricted_models":%s,"sammie_commit":"%s","sammie_archive_sha256":"%s","port":%s}\n' \
+  printf '{"install_root":"%s","platform":"macos","backend":"mps-or-cpu","install_mode":"%s","models":[%s],"includes_restricted_models":%s,"sam31_supported":false,"sam31_status":"unsupported","sammie_commit":"%s","sammie_archive_sha256":"%s","port":%s}\n' \
     "$INSTALL_ROOT" "$INSTALL_MODE" "$model_json" "$INCLUDES_RESTRICTED" "$SAMMIE_COMMIT" "$SAMMIE_ARCHIVE_SHA256" "$PORT"
   exit 0
 fi
@@ -196,6 +202,7 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump({
         "port": int(port), "repo": repo, "python": python,
         "accepted_restricted_models": accepted == "true", "platform": "macos",
+        "sam31_supported": False, "sam31_status": "unsupported",
         "environment": {"PYTORCH_ENABLE_MPS_FALLBACK": "1"},
     }, handle, indent=2)
 PY
@@ -211,10 +218,10 @@ import datetime, json, sys
 path, mode, models, port = sys.argv[1:]
 with open(path, "w", encoding="utf-8") as handle:
     json.dump({
-        "version": "1.2.1", "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "version": "1.3.0", "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": "macos", "backend": "mps-or-cpu", "install_mode": mode,
         "models_requested": [item for item in models.split(",") if item],
-        "sammie_commit": "129a0a54950d71b535cdcdbd06090c5583e293d9", "port": int(port),
+        "sammie_commit": "6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06", "sammie_archive_sha256": "829670BBDE1A92445DCF3D6716D94E35729974799B058C5169E17125A906BE59", "port": int(port),
     }, handle, indent=2)
 PY
 

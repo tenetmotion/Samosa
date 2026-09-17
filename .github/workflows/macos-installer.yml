@@ -6,7 +6,7 @@ on:
       version:
         description: Installer version
         required: true
-        default: 1.2.1
+        default: 1.3.0
   release:
     types: [published]
 
@@ -33,9 +33,9 @@ jobs:
       - name: Validate pinned macOS runtime resolution
         run: |
           work="$(mktemp -d)"
-          commit="129a0a54950d71b535cdcdbd06090c5583e293d9"
+          commit="6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06"
           curl -fL --retry 3 -o "$work/sammie.zip" "https://github.com/Zarxrax/Sammie-Roto-2/archive/$commit.zip"
-          echo "71CFC39AC389DA6C138E956881DEA1A811F473F63052FB026B8E24CFE28AF62B  $work/sammie.zip" | shasum -a 256 -c -
+          echo "829670BBDE1A92445DCF3D6716D94E35729974799B058C5169E17125A906BE59  $work/sammie.zip" | shasum -a 256 -c -
           ditto -x -k "$work/sammie.zip" "$work/source"
           curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$work/uv" sh
           "$work/uv/uv" sync --extra cpu --dry-run --directory "$work/source/Sammie-Roto-2-$commit"

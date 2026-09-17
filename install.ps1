@@ -1,5 +1,8 @@
 param(
     [string]$SammieRepo,
+    [ValidateSet("cu130", "cu126", "xpu", "cpu")]
+    [string]$Backend = "cu130",
+    [string]$InstallRoot,
     [int]$Port = 43831,
     [switch]$Uninstall
 )
@@ -7,6 +10,10 @@ param(
 $ErrorActionPreference = "Stop"
 $PluginId = "com.tenet.samosa.roto"
 $Target = Join-Path $env:APPDATA "Adobe\CEP\extensions\$PluginId"
+if (-not $InstallRoot) {
+    $InstallRoot = Join-Path $env:LOCALAPPDATA "Programs\Samosa"
+}
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 
 if ($Uninstall) {
     if (Test-Path -LiteralPath $Target) {
@@ -57,12 +64,25 @@ if (Test-Path -LiteralPath $Target) {
 New-Item -ItemType Directory -Path $Target -Force | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot "panel\*") -Destination $Target -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "backend") -Destination (Join-Path $Target "backend") -Recurse -Force
+New-Item -ItemType Directory -Path (Join-Path $Target "installer") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-sam31.ps1") -Destination (Join-Path $Target "installer\manage-sam31.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\sam31_download.py") -Destination (Join-Path $Target "installer\sam31_download.py") -Force
+$PersistentInstaller = Join-Path $InstallRoot "installer"
+New-Item -ItemType Directory -Path $PersistentInstaller -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-sam31.ps1") -Destination (Join-Path $PersistentInstaller "manage-sam31.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\sam31_download.py") -Destination (Join-Path $PersistentInstaller "sam31_download.py") -Force
 
 $Config = @{
     port = $Port
     repo = $SammieRepo
     python = $Python
     accepted_restricted_models = $false
+    sam31_runtime = Join-Path $InstallRoot "runtime\SAM3.1"
+    environment = @{
+        SAMOSA_INSTALL_ROOT = $InstallRoot
+        SAMOSA_CORE_RUNTIME = $SammieRepo
+        SAMOSA_BACKEND = $Backend
+    }
 } | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $Target "config.json"), $Config, (New-Object System.Text.UTF8Encoding($false)))
 
@@ -72,9 +92,11 @@ foreach ($Version in 11..14) {
     New-ItemProperty -Path $Key -Name PlayerDebugMode -Value "1" -PropertyType String -Force | Out-Null
 }
 
-& $Python -m py_compile (Join-Path $Target "backend\service.py")
-if ($LASTEXITCODE -ne 0) {
-    throw "Installed backend failed Python compilation"
+Get-ChildItem -LiteralPath (Join-Path $Target "backend") -Filter "*.py" | ForEach-Object {
+    & $Python -m py_compile $_.FullName
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installed backend failed Python compilation: $($_.Name)"
+    }
 }
 
 Write-Host "Installed Samosa for After Effects"

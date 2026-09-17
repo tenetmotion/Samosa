@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.1"
+  #define MyAppVersion "1.3.0"
 #endif
 
 #define MyAppName "Samosa"
@@ -40,6 +40,8 @@ Source: "bootstrap.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "invoke-utf8-script.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "download_models.py"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "manage-models.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "manage-sam31.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "sam31_download.py"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -66,6 +68,7 @@ Type: files; Name: "{app}\install-state.json"
 var
   BackendPage: TInputOptionWizardPage;
   ModePage: TInputOptionWizardPage;
+  Sam31Page: TInputOptionWizardPage;
   CustomPage: TInputOptionWizardPage;
   LicensePage: TInputOptionWizardPage;
 
@@ -84,11 +87,16 @@ begin
     'Model installation', 'Choose how model checkpoints are installed.',
     'Standard is fastest. Missing models can download automatically when first requested.', True, False);
   ModePage.Add('Standard - SAM2 Base now; other models on demand');
-  ModePage.Add('Complete - pre-download every supported model');
+  ModePage.Add('Complete - pre-download every supported model; SAM 3.1 optional');
   ModePage.Add('Custom - choose individual model packs');
   ModePage.SelectedValueIndex := 0;
 
-  CustomPage := CreateInputOptionPage(ModePage.ID,
+  Sam31Page := CreateInputOptionPage(ModePage.ID,
+    'SAM 3.1', 'Optionally prepare the latest Segment Anything model.',
+    'SAM 3.1 uses a separate runtime, gated model access, and the Meta SAM License. The checkpoint downloads after access is granted.', False, True);
+  Sam31Page.Add('Prepare SAM 3.1 (Windows NVIDIA only)');
+
+  CustomPage := CreateInputOptionPage(Sam31Page.ID,
     'Custom model packs', 'Choose model packs to pre-download.',
     'Already verified model files are kept and skipped.', False, True);
   CustomPage.Add('SAM2 Base (recommended)');
@@ -102,8 +110,15 @@ begin
 
   LicensePage := CreateInputOptionPage(CustomPage.ID,
     'Optional model licenses', 'Restricted model packs require explicit acceptance.',
-    'MatAnyone/MatAnyone2 use S-Lab noncommercial terms. VideoMaMa uses CC BY-NC 4.0 and its SVD VAE dependency has separate Stability AI Community License terms. MiniMax Remover has noncommercial terms. See THIRD_PARTY_NOTICES.md.', False, True);
+    'MatAnyone/MatAnyone2 use S-Lab noncommercial terms. VideoMaMa uses CC BY-NC 4.0 and its SVD VAE dependency has separate Stability AI Community License terms. MiniMax Remover has noncommercial terms. SAM 3.1 is gated, uses the Meta SAM License, and is supported only on Windows NVIDIA. See THIRD_PARTY_NOTICES.md.', False, True);
   LicensePage.Add('I understand these model packs are not licensed for unrestricted commercial use.');
+  LicensePage.Add('I acknowledge the Meta SAM License and will obtain gated SAM 3.1 access from Hugging Face.');
+end;
+
+function Sam31Selected: Boolean;
+begin
+  Result := (ModePage.SelectedValueIndex <> 0) and
+    (BackendPage.SelectedValueIndex <= 1) and Sam31Page.Values[0];
 end;
 
 function RestrictedSelected: Boolean;
@@ -116,9 +131,12 @@ end;
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
-  if (PageID = CustomPage.ID) and (ModePage.SelectedValueIndex <> 2) then
+  if (PageID = Sam31Page.ID) and
+    ((ModePage.SelectedValueIndex = 0) or (BackendPage.SelectedValueIndex > 1)) then
     Result := True
-  else if (PageID = LicensePage.ID) and not RestrictedSelected then
+  else if (PageID = CustomPage.ID) and (ModePage.SelectedValueIndex <> 2) then
+    Result := True
+  else if (PageID = LicensePage.ID) and not (RestrictedSelected or Sam31Selected) then
     Result := True;
 end;
 
@@ -133,15 +151,20 @@ begin
     AnySelected := False;
     for I := 0 to 6 do
       AnySelected := AnySelected or CustomPage.Values[I];
-    if not AnySelected then
+    if not AnySelected and not Sam31Selected then
     begin
       MsgBox('Select at least one model pack.', mbError, MB_OK);
       Result := False;
     end;
   end;
-  if (CurPageID = LicensePage.ID) and not LicensePage.Values[0] then
+  if (CurPageID = LicensePage.ID) and RestrictedSelected and not LicensePage.Values[0] then
   begin
     MsgBox('Accept the displayed model restrictions or return and choose only unrestricted segmentation packs.', mbError, MB_OK);
+    Result := False;
+  end;
+  if (CurPageID = LicensePage.ID) and Sam31Selected and not LicensePage.Values[1] then
+  begin
+    MsgBox('Acknowledge the Meta SAM License and gated access requirement.', mbError, MB_OK);
     Result := False;
   end;
 end;
@@ -201,6 +224,14 @@ begin
   end;
 end;
 
+function GetSam31Flag(Param: String): String;
+begin
+  if Sam31Selected and LicensePage.Values[1] then
+    Result := '-IncludeSam31 -AcceptSam31License'
+  else
+    Result := '';
+end;
+
 function GetLicenseFlag(Param: String): String;
 begin
   if RestrictedSelected and LicensePage.Values[0] then
@@ -222,7 +253,8 @@ begin
   PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
   Parameters := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\installer\bootstrap.ps1') +
     '" -InstallRoot "' + ExpandConstant('{app}') + '" -Backend "' + GetBackend('') +
-    '" -InstallMode "' + GetInstallMode('') + '" -Models "' + GetModelKeys('') + '" ' + GetLicenseFlag('');
+    '" -InstallMode "' + GetInstallMode('') + '" -Models "' + GetModelKeys('') + '" ' +
+    GetLicenseFlag('') + ' ' + GetSam31Flag('');
 
   if not Exec(PowerShell, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     RaiseException('Could not start the Samosa runtime installer.');

@@ -35,7 +35,15 @@
   }
 
   function localBackendSha256() {
-    return crypto.createHash("sha256").update(fs.readFileSync(serviceScript)).digest("hex").toLowerCase();
+    var digest = crypto.createHash("sha256");
+    ["service.py", "sam3_bridge.py", "sam3_worker.py"].forEach(function (name) {
+      var file = path.join(extensionPath, "backend", name);
+      if (!fs.existsSync(file)) return;
+      digest.update(name, "utf8");
+      digest.update(Buffer.from([0]));
+      digest.update(fs.readFileSync(file));
+    });
+    return digest.digest("hex").toLowerCase();
   }
 
   var expectedBackendSha256 = localBackendSha256();
@@ -56,6 +64,12 @@
   var renderToken = 0;
   var viewerScales = [100, 75, 50];
   var viewerScaleIndex = 0;
+  var sam3Status = null;
+  var sam3ModelEntry = null;
+  var sam3PromptMode = "point";
+  var sam3StatusTimer = null;
+  var sam3Drag = null;
+  var suppressNextViewerClick = false;
 
   function el(id) { return document.getElementById(id); }
   function number(id) { return Number(el(id).value); }
@@ -63,6 +77,91 @@
     var parsed = Number(value);
     return isFinite(parsed) ? parsed : fallback;
   }
+  function sam3ModelSelected(model) {
+    return String(model || "") === "SAM3.1";
+  }
+  function sam3ControlsVisible(model, status, entry) {
+    return sam3ModelSelected(model);
+  }
+  function sam3Availability(status, entry) {
+    var source = status || entry || {};
+    if (source.availability !== undefined) return source.availability === true || source.availability === "available" || source.availability === "ready" || source.availability === "installed";
+    if (source.available !== undefined) return source.available === true;
+    if (source.installed !== undefined) return source.installed === true;
+    if (source.ready !== undefined) return source.ready === true;
+    if (source.status !== undefined) return source.status === "ready" || source.status === "available" || source.status === "installed";
+    return false;
+  }
+  function sam3CapabilitySupported(capabilities, mode) {
+    if (!capabilities) return true;
+    var source = capabilities.prompts || capabilities.modes || capabilities;
+    if (Array.isArray(source)) return source.indexOf(mode) >= 0 || source.indexOf("all") >= 0;
+    if (typeof source === "object") {
+      if (source[mode] === false) return false;
+      if (source[mode] === true) return true;
+      if (source.all === false) return false;
+    }
+    return true;
+  }
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, finiteNumber(value, 0)));
+  }
+  function normalizeCanvasPoint(clientX, clientY, rect) {
+    var width = Math.max(1, finiteNumber(rect && rect.width, 1));
+    var height = Math.max(1, finiteNumber(rect && rect.height, 1));
+    return {
+      x: clamp01((finiteNumber(clientX, 0) - finiteNumber(rect && rect.left, 0)) / width),
+      y: clamp01((finiteNumber(clientY, 0) - finiteNumber(rect && rect.top, 0)) / height)
+    };
+  }
+  function normalizeCanvasRect(start, current, rect) {
+    var first = normalizeCanvasPoint(start.x, start.y, rect);
+    var last = normalizeCanvasPoint(current.x, current.y, rect);
+    return {
+      x1: Math.min(first.x, last.x),
+      y1: Math.min(first.y, last.y),
+      x2: Math.max(first.x, last.x),
+      y2: Math.max(first.y, last.y)
+    };
+  }
+  function buildSam3PromptPayload(mode, objectId, frameNumber, prompt, label) {
+    var payload = { type: mode, object_id: Number(objectId), frame: Number(frameNumber) };
+    if (mode === "point") {
+      payload.x = clamp01(prompt.x);
+      payload.y = clamp01(prompt.y);
+      payload.label = label;
+    } else if (mode === "box" || mode === "example") {
+      payload.x1 = clamp01(prompt.x1);
+      payload.y1 = clamp01(prompt.y1);
+      payload.x2 = clamp01(prompt.x2);
+      payload.y2 = clamp01(prompt.y2);
+      payload.label = mode === "box" ? "positive" : label;
+    } else if (mode === "text") {
+      payload.text = String(prompt.text || "").trim();
+    }
+    return payload;
+  }
+  function redactSam3Message(message, secret) {
+    var safe = String(message || "");
+    if (secret) safe = safe.split(String(secret)).join("[redacted]");
+    return safe.replace(/hf_[A-Za-z0-9_-]+/g, "[redacted]");
+  }
+  function friendlySam3Message(message, secret) {
+    var safe = redactSam3Message(message, secret);
+    var lowered = safe.toLowerCase();
+    if (lowered.indexOf("403 client error") >= 0 && (
+      lowered.indexOf("gated repo") >= 0 ||
+      lowered.indexOf("not in the authorized list") >= 0 ||
+      lowered.indexOf("access to model facebook/sam3.1 is restricted") >= 0
+    )) {
+      return "Hugging Face has not granted this token's account SAM 3.1 access. Open the access page with the same account, submit the Meta form, wait for access to be granted, then retry with a read token from that account.";
+    }
+    if (lowered.indexOf("401 client error") >= 0 || lowered.indexOf("invalid user token") >= 0) {
+      return "Hugging Face rejected this token. Use a valid read token from the same account that has SAM 3.1 access.";
+    }
+    return safe;
+  }
+
   function frameAtSourceTime(seconds, fps) {
     var product = finiteNumber(seconds, 0) * finiteNumber(fps, 0);
     var nearest = Math.round(product);
@@ -329,7 +428,7 @@
     var list = el("pointList");
     list.innerHTML = "";
     if (!state || !state.points.length) return;
-    state.points.slice().reverse().slice(0, 20).forEach(function (p) {
+    state.points.filter(function (p) { return !p.synthetic; }).slice().reverse().slice(0, 20).forEach(function (p) {
       var row = document.createElement("div");
       row.className = "point-row";
       row.innerHTML = "<b>F" + (p.frame + 1) + "</b><span>Object " + (p.object_id + 1) + "</span><span>" + (p.positive ? "Include" : "Exclude") + "</span>";
@@ -338,6 +437,10 @@
   }
   function renderState() {
     if (!state) return;
+    if (state.settings && state.settings.sam_model &&
+        [].some.call(el("samModel").options, function (option) { return option.value === state.settings.sam_model; })) {
+      el("samModel").value = state.settings.sam_model;
+    }
     el("frameSlider").max = Math.max(0, state.total_frames - 1);
     frame = Math.max(0, Math.min(frame, state.total_frames - 1));
     el("frameSlider").value = frame;
@@ -347,6 +450,7 @@
     el("trackingStatus").textContent = tracked.complete ? "Tracked: complete" : (tracked.frames ? "Masks: " + tracked.frames + " / " + state.total_frames + " frames" : "Not tracked");
     updateObjects();
     updatePointList();
+    updateSam3Controls();
     refreshFrame();
   }
   function refreshFrame() {
@@ -400,12 +504,28 @@
 
   async function addPoint(event) {
     if (!state || !state.loaded || activeJob) return;
+    if (suppressNextViewerClick) {
+      suppressNextViewerClick = false;
+      return;
+    }
+    if (sam3ModelSelected(el("samModel").value) && sam3PromptMode !== "point") {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     var canvas = el("viewer");
     var rect = canvas.getBoundingClientRect();
+    var isPositive = event.type === "contextmenu" ? false : positive;
+    if (sam3ModelSelected(el("samModel").value)) {
+      var normalized = normalizeCanvasPoint(event.clientX, event.clientY, rect);
+      await sendSam3Prompt(
+        buildSam3PromptPayload("point", number("objectId"), frame, normalized, isPositive ? "positive" : "negative"),
+        isPositive ? "Include point submitted" : "Exclude point submitted"
+      );
+      return;
+    }
     var x = Math.round((event.clientX - rect.left) * canvas.width / rect.width);
     var y = Math.round((event.clientY - rect.top) * canvas.height / rect.height);
-    var isPositive = event.type === "contextmenu" ? false : positive;
     try {
       setStatus(state.segmentation_ready ? "Updating mask..." : "Loading segmentation model...");
       await saveSettings();
@@ -415,12 +535,11 @@
     } catch (e) { setStatus(e.message, "error"); }
   }
 
-  async function startJob(endpoint, body, label, onComplete) {
+  async function monitorJob(job, label, onComplete, refreshState) {
+    activeJob = job;
+    el("jobBar").classList.remove("hidden");
+    el("jobLabel").textContent = label;
     try {
-      await saveSettings();
-      activeJob = await api("POST", endpoint, body || {});
-      el("jobBar").classList.remove("hidden");
-      el("jobLabel").textContent = label;
       while (activeJob && ["queued", "running"].indexOf(activeJob.status) >= 0) {
         el("jobLabel").textContent = activeJob.message || label;
         el("jobProgress").value = activeJob.progress || 0;
@@ -434,10 +553,24 @@
       var result = activeJob.result;
       activeJob = null;
       el("jobBar").classList.add("hidden");
-      state = await api("GET", "/api/state");
-      refreshFrame();
+      if (refreshState !== false) {
+        state = await api("GET", "/api/state");
+        refreshFrame();
+      }
       setStatus(label + " complete");
       if (onComplete) await onComplete(result);
+    } catch (error) {
+      activeJob = null;
+      el("jobBar").classList.add("hidden");
+      throw error;
+    }
+  }
+
+  async function startJob(endpoint, body, label, onComplete) {
+    try {
+      await saveSettings();
+      var job = await api("POST", endpoint, body || {});
+      await monitorJob(job, label, onComplete, true);
     } catch (e) {
       activeJob = null;
       el("jobBar").classList.add("hidden");
@@ -456,6 +589,225 @@
     var response = JSON.parse(raw);
     if (!response.ok) throw new Error(response.error);
     setStatus("Added " + response.layerName + " to comp");
+  }
+
+  function sam3ModelEntryFrom(payload) {
+    var entries = Array.isArray(payload) ? payload : payload && (payload.models || payload.entries || payload.data);
+    if (!Array.isArray(entries) && entries && typeof entries === "object") {
+      entries = Object.keys(entries).map(function (key) {
+        var value = entries[key];
+        return typeof value === "object" ? Object.assign({ id: key }, value) : { id: key, availability: value };
+      });
+    }
+    if (!Array.isArray(entries)) return null;
+    return entries.filter(function (entry) { return entry && String(entry.id || entry.name || "") === "SAM3.1"; })[0] || null;
+  }
+  function sam3StatusReason(status, entry) {
+    var source = status || entry || {};
+    var job = source.job || source.install_job;
+    var failedJobMessage = job && String(job.status || "").toLowerCase() === "failed" && job.message;
+    return friendlySam3Message(failedJobMessage || source.reason || source.message || "Install the gated model to enable prompts.");
+  }
+  function sam3JobActive(status) {
+    var job = status && (status.job || status.install_job);
+    return !!(job && ["queued", "running", "installing", "downloading"].indexOf(String(job.status || "").toLowerCase()) >= 0);
+  }
+  function updateSam3Controls() {
+    var controls = el("sam3Controls");
+    if (!controls) return;
+    var selected = sam3ModelSelected(el("samModel").value);
+    controls.classList.toggle("hidden", !selected);
+    el("promptBoxOverlay").classList.add("hidden");
+    if (!selected) return;
+    var available = sam3Availability(sam3Status, sam3ModelEntry);
+    var supported = !sam3Status || sam3Status.supported !== false;
+    var capabilities = (sam3Status && sam3Status.capabilities) || (sam3ModelEntry && sam3ModelEntry.capabilities);
+    var labels = {
+      point: "Click to add an include or exclude point.",
+      box: "Drag a box to add one positive geometry prompt.",
+      text: "Describe an object, then submit the text prompt.",
+      example: positive ? "Drag a box to add an include example." : "Drag a box to add an exclude example."
+    };
+    var loaded = !!(state && state.loaded);
+    var promptReady = available && loaded;
+    var currentSupported = promptReady && sam3CapabilitySupported(capabilities, sam3PromptMode);
+    var hint = !available
+      ? sam3StatusReason(sam3Status, sam3ModelEntry)
+      : (!loaded ? "Load footage to enable SAM 3.1 prompts." : (currentSupported ? labels[sam3PromptMode] : "This prompt mode is not supported by the installed SAM 3.1 backend."));
+    el("sam3PromptHint").textContent = hint;
+    [].forEach.call(document.querySelectorAll("#sam3PromptModes button"), function (button) {
+      var mode = button.dataset.promptMode;
+      var supported = promptReady && sam3CapabilitySupported(capabilities, mode);
+      button.disabled = !supported;
+      button.title = supported ? "" : (available ? "This prompt mode is not supported by the installed SAM 3.1 backend." : "Install SAM 3.1 to enable prompts.");
+      button.classList.toggle("selected", mode === sam3PromptMode);
+    });
+    el("sam3TextPrompt").classList.toggle("hidden", sam3PromptMode !== "text");
+    el("sam3TextInput").disabled = !promptReady;
+    el("sam3TextSubmit").disabled = !promptReady || !el("sam3TextInput").value.trim();
+    el("sam3Setup").classList.toggle("hidden", available);
+    el("sam3SetupTitle").textContent = supported ? "SAM 3.1 is not installed" : "SAM 3.1 is unavailable";
+    el("sam3SetupReason").textContent = sam3JobActive(sam3Status) ? "SAM 3.1 setup is in progress." : sam3StatusReason(sam3Status, sam3ModelEntry);
+    el("sam3Install").disabled = !supported || sam3JobActive(sam3Status) || !el("sam3LicenseAccepted").checked || !el("sam3Token").value.trim();
+    el("sam3Token").disabled = sam3JobActive(sam3Status);
+    el("sam3LicenseAccepted").disabled = !supported || sam3JobActive(sam3Status);
+    el("sam3AccessPage").disabled = sam3JobActive(sam3Status);
+  }
+  async function refreshSam3Status() {
+    if (!sam3ModelSelected(el("samModel").value)) {
+      if (sam3StatusTimer) clearTimeout(sam3StatusTimer);
+      sam3StatusTimer = null;
+      updateSam3Controls();
+      return;
+    }
+    try {
+      var models = await api("GET", "/api/models");
+      sam3ModelEntry = sam3ModelEntryFrom(models);
+    } catch (e) {
+      sam3ModelEntry = null;
+    }
+    try {
+      sam3Status = await api("GET", "/api/sam3/status");
+    } catch (e2) {
+      sam3Status = { availability: false, reason: "SAM 3.1 status unavailable." };
+    }
+    updateSam3Controls();
+    if (sam3JobActive(sam3Status)) {
+      if (sam3StatusTimer) clearTimeout(sam3StatusTimer);
+      sam3StatusTimer = setTimeout(function () { refreshSam3Status(); }, 1000);
+    }
+  }
+  function sam3Ready() {
+    return sam3ModelSelected(el("samModel").value) && sam3Availability(sam3Status, sam3ModelEntry);
+  }
+  async function sendSam3Prompt(payload, successMessage) {
+    if (!state || !state.loaded) {
+      setStatus("Load footage before adding a SAM 3.1 prompt", "error");
+      return;
+    }
+    if (!sam3Ready()) {
+      updateSam3Controls();
+      setStatus("SAM 3.1 is not ready", "error");
+      return;
+    }
+    try {
+      setStatus("Submitting SAM 3.1 prompt...");
+      await saveSettings();
+      var response = await api("POST", "/api/sam3/prompt", payload);
+      if (response && response.state) state = response.state;
+      else state = await api("GET", "/api/state");
+      renderState();
+      setStatus(successMessage);
+    } catch (e) {
+      setStatus(redactSam3Message(e.message), "error");
+    }
+  }
+  function submitSam3Text() {
+    var textPrompt = el("sam3TextInput").value.trim();
+    if (!textPrompt || sam3PromptMode !== "text") {
+      updateSam3Controls();
+      return;
+    }
+    sendSam3Prompt(
+      buildSam3PromptPayload("text", number("objectId"), frame, { text: textPrompt }, positive ? "positive" : "negative"),
+      "Text prompt submitted"
+    );
+  }
+  function updatePromptBoxOverlay(start, current, rect) {
+    var box = normalizeCanvasRect(start, current, rect);
+    var shellRect = el("viewer").parentNode.getBoundingClientRect();
+    var overlay = el("promptBoxOverlay");
+    overlay.style.left = (rect.left - shellRect.left + box.x1 * rect.width) + "px";
+    overlay.style.top = (rect.top - shellRect.top + box.y1 * rect.height) + "px";
+    overlay.style.width = ((box.x2 - box.x1) * rect.width) + "px";
+    overlay.style.height = ((box.y2 - box.y1) * rect.height) + "px";
+    overlay.classList.remove("hidden");
+  }
+  function beginSam3Drag(event) {
+    if (!state || !state.loaded || activeJob || !sam3Ready() || (sam3PromptMode !== "box" && sam3PromptMode !== "example") || event.button !== 0) return;
+    event.preventDefault();
+    var canvas = el("viewer");
+    var rect = canvas.getBoundingClientRect();
+    sam3Drag = { start: { x: event.clientX, y: event.clientY }, rect: rect, pointerId: event.pointerId };
+    updatePromptBoxOverlay(sam3Drag.start, sam3Drag.start, rect);
+    try { canvas.setPointerCapture(event.pointerId); } catch (e) {}
+  }
+  function moveSam3Drag(event) {
+    if (!sam3Drag || event.pointerId !== sam3Drag.pointerId) return;
+    event.preventDefault();
+    updatePromptBoxOverlay(sam3Drag.start, { x: event.clientX, y: event.clientY }, sam3Drag.rect);
+  }
+  function finishSam3Drag(event) {
+    if (!sam3Drag || event.pointerId !== sam3Drag.pointerId) return;
+    event.preventDefault();
+    var drag = sam3Drag;
+    sam3Drag = null;
+    try { el("viewer").releasePointerCapture(event.pointerId); } catch (e) {}
+    var prompt = normalizeCanvasRect(drag.start, { x: event.clientX, y: event.clientY }, drag.rect);
+    el("promptBoxOverlay").classList.add("hidden");
+    suppressNextViewerClick = true;
+    setTimeout(function () { suppressNextViewerClick = false; }, 0);
+    if ((prompt.x2 - prompt.x1) < 0.002 || (prompt.y2 - prompt.y1) < 0.002) {
+      setStatus("Drag a larger prompt box", "error");
+      return;
+    }
+    var label = sam3PromptMode === "box" ? "positive" : (positive ? "positive" : "negative");
+    sendSam3Prompt(
+      buildSam3PromptPayload(sam3PromptMode, number("objectId"), frame, prompt, label),
+      sam3PromptMode === "box" ? "Box prompt submitted" : "Example submitted"
+    );
+  }
+
+  function cancelSam3Drag(event) {
+    if (!sam3Drag || event.pointerId !== sam3Drag.pointerId) return;
+    sam3Drag = null;
+    el("promptBoxOverlay").classList.add("hidden");
+    try { el("viewer").releasePointerCapture(event.pointerId); } catch (e) {}
+  }
+
+  function setSam3PromptMode(mode) {
+    if (["point", "box", "text", "example"].indexOf(mode) < 0) return;
+    sam3PromptMode = mode;
+    el("promptBoxOverlay").classList.add("hidden");
+    updateSam3Controls();
+  }
+  function openSam3AccessPage() {
+    var url = "https://huggingface.co/facebook/sam3.1";
+    try {
+      if (!window.cep || !window.cep.util || typeof window.cep.util.openURLInDefaultBrowser !== "function") {
+        throw new Error("CEP browser opening is unavailable");
+      }
+      window.cep.util.openURLInDefaultBrowser(url);
+    } catch (e) {
+      setStatus(redactSam3Message(e.message), "error");
+    }
+  }
+  async function installSam3() {
+    var tokenInput = el("sam3Token");
+    var token = String(tokenInput.value || "").trim();
+    if (!token) {
+      setStatus("Enter a Hugging Face token to install SAM 3.1", "error");
+      return;
+    }
+    if (!el("sam3LicenseAccepted").checked) {
+      setStatus("Accept the Meta SAM License before installing SAM 3.1", "error");
+      return;
+    }
+    tokenInput.value = "";
+    try {
+      setStatus("Starting SAM 3.1 setup...");
+      var setupJob = await api("POST", "/api/sam3/setup", { hf_token: token, accept_license: true });
+      token = "";
+      sam3Status = { availability: false, job: setupJob, reason: "SAM 3.1 setup is in progress." };
+      updateSam3Controls();
+      setStatus("SAM 3.1 setup started");
+      await monitorJob(setupJob, "SAM 3.1 setup", refreshSam3Status, false);
+    } catch (e) {
+      setStatus(friendlySam3Message(e.message, token), "error");
+    } finally {
+      token = "";
+      tokenInput.value = "";
+    }
   }
 
   function switchMode(mode) {
@@ -484,8 +836,12 @@
     };
     el("viewer").addEventListener("click", addPoint);
     el("viewer").addEventListener("contextmenu", addPoint);
-    el("positiveTool").onclick = function () { positive = true; this.classList.add("selected"); el("negativeTool").classList.remove("selected"); };
-    el("negativeTool").onclick = function () { positive = false; this.classList.add("selected"); el("positiveTool").classList.remove("selected"); };
+    el("viewer").addEventListener("pointerdown", beginSam3Drag);
+    el("viewer").addEventListener("pointermove", moveSam3Drag);
+    el("viewer").addEventListener("pointerup", finishSam3Drag);
+    el("viewer").addEventListener("pointercancel", cancelSam3Drag);
+    el("positiveTool").onclick = function () { positive = true; this.classList.add("selected"); el("negativeTool").classList.remove("selected"); updateSam3Controls(); };
+    el("negativeTool").onclick = function () { positive = false; this.classList.add("selected"); el("positiveTool").classList.remove("selected"); updateSam3Controls(); };
     el("frameSlider").oninput = function () { frame = Number(this.value); renderState(); };
     el("prevFrame").onclick = function () { frame = Math.max(0, frame - 1); renderState(); };
     el("nextFrame").onclick = function () { frame = Math.min(state ? state.total_frames - 1 : 0, frame + 1); renderState(); };
@@ -528,6 +884,30 @@
       if (process.platform === "darwin") child.spawn("open", ["-R", latestOutput.path], { detached: true });
       else child.spawn("explorer.exe", ["/select,", latestOutput.path], { detached: true });
     };
+    el("samModel").onchange = async function () {
+      setSam3PromptMode("point");
+      updateSam3Controls();
+      if (state) {
+        try { await saveSettings(); renderState(); }
+        catch (e) { setStatus(e.message, "error"); }
+      }
+      if (sam3ModelSelected(this.value)) refreshSam3Status();
+    };
+    [].forEach.call(document.querySelectorAll("#sam3PromptModes button"), function (button) {
+      button.onclick = function () { if (!this.disabled) setSam3PromptMode(this.dataset.promptMode); };
+    });
+    el("sam3TextInput").oninput = updateSam3Controls;
+    el("sam3TextInput").onkeydown = function (event) {
+      if (event.key === "Enter" && !el("sam3TextSubmit").disabled) {
+        event.preventDefault();
+        submitSam3Text();
+      }
+    };
+    el("sam3TextSubmit").onclick = submitSam3Text;
+    el("sam3AccessPage").onclick = openSam3AccessPage;
+    el("sam3Token").oninput = updateSam3Controls;
+    el("sam3LicenseAccepted").onchange = updateSam3Controls;
+    el("sam3Install").onclick = installSam3;
     el("removalMethod").onchange = updateRemovalFields;
     el("outputType").onchange = function () { if (currentMode === "output") { currentView = outputView(); refreshFrame(); } };
     el("objectId").onchange = refreshFrame;
@@ -541,6 +921,7 @@
     restoreViewerScale();
     restoreExportDestination();
     updateRemovalFields();
+    updateSam3Controls();
     try {
       log("Panel initialization started; extension=" + extensionPath);
       await ensureService();
@@ -551,6 +932,7 @@
         setDefaultOutputName(state.path);
         renderState();
       }
+      await refreshSam3Status();
     } catch (e) { log("Panel initialization failed: " + e.stack); setStatus(e.message, "error"); }
   }
   init();

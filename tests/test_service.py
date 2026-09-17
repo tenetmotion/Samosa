@@ -309,7 +309,7 @@ class ServiceIntegrationTests(unittest.TestCase):
         health = self.engine.health()
         self.assertTrue(health["ok"])
         self.assertTrue(health["mock"])
-        expected_hash = hashlib.sha256(Path(service.__file__).read_bytes()).hexdigest()
+        expected_hash = service._backend_sha256()
         self.assertEqual(service.BACKEND_SHA256, expected_hash)
         self.assertEqual(health["backend_sha256"], expected_hash)
         self.assertEqual(Path(self.engine.core.temp_dir), Path(self.session_temp.name))

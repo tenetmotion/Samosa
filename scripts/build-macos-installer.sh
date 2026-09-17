@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="${1:-1.2.1}"
+VERSION="${1:-1.3.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist/installer"
 WORK="$ROOT/dist/macos-build"
