@@ -113,6 +113,20 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("activeJob.message || label", panel)
         self.assertIn('job.message = "Downloading %s"', service)
 
+    def test_windows_installer_supports_cutmind_artifact_signing(self):
+        builder = (ROOT / "scripts" / "build-installer.ps1").read_text(encoding="utf-8")
+        signer = (ROOT / "scripts" / "sign-installer.ps1").read_text(encoding="utf-8")
+        releasing = (ROOT / "docs" / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("[switch]$Sign", builder)
+        self.assertIn("sign-installer.ps1", builder)
+        self.assertIn("cutmind-signing", signer)
+        self.assertIn("cutmindpublic", signer)
+        self.assertIn('"Samosa"', signer)
+        self.assertIn("Get-AuthenticodeSignature", signer)
+        self.assertIn("verify /pa /all /v", signer)
+        self.assertIn("System.Text.UTF8Encoding($false)", signer)
+        self.assertIn("-Sign", releasing)
+
     def test_macos_installer_is_cross_architecture_and_uses_user_runtime(self):
         bootstrap = MAC_BOOTSTRAP.read_text(encoding="utf-8")
         builder = (ROOT / "scripts" / "build-macos-installer.sh").read_text(encoding="utf-8")

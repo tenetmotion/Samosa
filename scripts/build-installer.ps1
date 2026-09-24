@@ -1,7 +1,9 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version = "1.3.0",
-    [string]$OutputDir
+    [string]$OutputDir,
+    [switch]$Sign,
+    [string]$ArtifactSigningDlibPath = $env:SAMOSA_ARTIFACT_SIGNING_DLIB
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +25,11 @@ if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE
 
 $Installer = Join-Path $OutputDir "Samosa-Setup-$Version.exe"
 if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer output was not created: $Installer" }
+if ($Sign) {
+    $SignScript = Join-Path $PSScriptRoot "sign-installer.ps1"
+    & $SignScript -InstallerPath $Installer -ArtifactSigningDlibPath $ArtifactSigningDlibPath
+    if ($LASTEXITCODE -ne 0) { throw "Installer signing failed with exit code $LASTEXITCODE" }
+}
 $Hash = Get-FileHash -Algorithm SHA256 -LiteralPath $Installer
 Write-Host "Installer: $Installer"
 Write-Host "SHA-256:  $($Hash.Hash)"

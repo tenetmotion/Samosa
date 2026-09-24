@@ -13,7 +13,9 @@
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.3.0
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.3.0
+$env:SAMOSA_ARTIFACT_SIGNING_DLIB = "C:\path\to\Azure.CodeSigning.Dlib.dll"
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.3.0 -Sign
+Get-AuthenticodeSignature .\dist\installer\Samosa-Setup-1.3.0.exe
 ```
 
 Run on macOS:
@@ -23,6 +25,11 @@ Run on macOS:
 ```
 
 The script validates the tree and writes a source directory and zip under `dist/`. Inspect both before publishing. GitHub source archives remain the canonical corresponding source for GPL releases.
+
+The Windows signing step uses the CutMind Microsoft Artifact Signing account and
+public certificate profile through the active Azure CLI identity. The generated
+metadata file is temporary and contains no credentials. Do not commit signing
+client binaries, Azure tokens, certificates, or generated metadata.
 
 ## Publish
 

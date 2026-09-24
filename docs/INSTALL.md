@@ -12,10 +12,12 @@ Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Samosa v1.
 
 ## EXE installation
 
-Download `Samosa-Setup-1.3.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify an unsigned build with:
+Download `Samosa-Setup-1.3.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum and the Tenet, LLC Authenticode signature with:
 
 ~~~powershell
 Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.3.0.exe
+Get-AuthenticodeSignature .\Samosa-Setup-1.3.0.exe |
+    Select-Object Status, StatusMessage, @{Name="Publisher"; Expression={$_.SignerCertificate.Subject}}
 ~~~
 
 Choose the backend matching the machine:
