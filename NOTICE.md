@@ -31,7 +31,22 @@ SAM 3.1 source and weights are governed by the Meta SAM License and gated Huggin
 
 SAM 3.1 is unsupported on macOS, CPU, and Intel XPU in this release. The macOS installer reports that limitation and preserves existing SAM2/EfficientTAM workflows.
 
-The name Samosa identifies this integration project and must not imply endorsement by the Sammie-Roto-2 or SAM 3.1 maintainers.
+## Optional CorridorKey 2.0 integration
+
+Samosa can download and invoke the unmodified CorridorKey 2.0 CLI in a separate Windows NVIDIA runtime:
+
+- Project: CorridorKey 2.0 by Niko Pueringer and Corridor Digital
+- Source: https://github.com/nikopueringer/CorridorKey2.0
+- Source commit: `485f5e9ab759ead6138cc990776184b59d6ea971`
+- Source archive SHA-256: `9DB1ABA4597C739B5C4603D463EC2760984B3A3B74D2B320D1E7D07F2E329B07`
+- Model: https://huggingface.co/nikopueringer/CorridorKey2.0
+- Model revision: `cf44a8db3f024bb49fd59daa408848ccf05f7477`
+
+Samosa does not embed, modify, or redistribute CorridorKey source or weights. Users explicitly accept the separate Corridor Key Licence before the on-demand manager downloads upstream assets. That license prohibits paid inference and requires a written agreement for commercial software integration. Samosa's GPL-3.0 license does not grant additional CorridorKey rights.
+
+CorridorKey 2.0 is unsupported on macOS, CPU, and Intel XPU in this release.
+
+The name Samosa identifies this integration project and must not imply endorsement by the Sammie-Roto-2, SAM 3.1, or CorridorKey maintainers.
 
 ## Adobe
 

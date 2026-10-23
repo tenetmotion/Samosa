@@ -9,6 +9,7 @@ After Effects
   -> localhost HTTP service (127.0.0.1)
       -> pinned Sammie-Roto-2 environment (SAM 2.1, matting, removal)
       -> isolated SAM 3.1 worker environment (optional Windows NVIDIA path)
+      -> isolated CorridorKey 2.0 CLI environment (optional Windows NVIDIA path)
   -> local, separately licensed checkpoints
 ```
 
@@ -30,10 +31,16 @@ SAM 3.1 runs in a second Python environment under `runtime/SAM3.1` because its N
 
 The worker uses the official video predictor. Because that predictor accepts JPEG frame directories, the service creates an idempotent, quality-95 JPEG mirror of Samosa's decoded PNG sequence and validates that every expected frame is present before a session starts. Semantic prompts replace the active concept, while point prompts retain that state to refine existing masks or add objects, matching the official SAM 3.1 interaction sequence. Small control messages cross standard input/output, while masks use bounded raw-array files under the session transport directory. The service validates each path, shape, type, and byte count before converting it to the same per-frame PNG mask layout used by existing matting, removal, preview, and export operations. Predictor operations are serialized inside the worker while cancellation remains out-of-band. Setup passes a Hugging Face token only in the child-process environment, redacts output, and discards it after the process exits.
 
+## CorridorKey 2.0 process
+
+CorridorKey 2.0 runs unmodified in `runtime/CorridorKey2.0`. `backend/corridorkey_bridge.py` builds and launches the pinned official CLI, translates stdout phases into the existing job protocol, and terminates it on cancellation. Samosa supplies its decoded frame directory plus either a complete tracked-mask sequence, a first-frame mask, or no hint for automatic keying. The bridge requires an exact alpha and cutout frame count before accepting a result.
+
+Alpha EXRs are normalized into Sammie's per-object matte layout for preview and existing matte outputs. CorridorKey's scene-linear straight-alpha cutout EXRs remain untouched for EXR export. Display-oriented PNG and video paths convert linear RGB to sRGB and preserve alpha. Source, weights, and foundation models remain in the separately licensed runtime and are never copied into Samosa packages.
+
 ## Composition-view selection
 
 Direct clicks in the After Effects Composition viewer require a native C++ effect using Adobe's Custom Comp UI APIs. That optional module should translate comp coordinates to source-frame coordinates and call the existing point API. Adobe SDK code and binaries must remain outside the source package unless their distribution terms have been independently verified.
 
 ## Dependency boundary
 
-Samosa does not vendor Sammie-Roto-2, SAM 3.1 source, or model weights in its repository. Release installers fetch pinned, checksum-verified source revisions and separately licensed checkpoints. Upstream core fixes should be proposed to their source project; Samosa carries compatibility adapters only for headless and After Effects integration.
+Samosa does not vendor Sammie-Roto-2, SAM 3.1, CorridorKey 2.0 source, or model weights in its repository. Release installers fetch pinned, checksum-verified source revisions and separately licensed checkpoints. Upstream core fixes should be proposed to their source project; Samosa carries compatibility adapters only for headless and After Effects integration.

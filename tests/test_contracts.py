@@ -15,7 +15,7 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(root.find(".//Type").text, "Panel")
         self.assertEqual(root.attrib["ExtensionBundleId"], "com.tenet.samosa.roto")
         self.assertEqual(root.attrib["ExtensionBundleName"], "Samosa")
-        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.3.0")
+        self.assertEqual(root.attrib["ExtensionBundleVersion"], "1.4.0")
         params = [node.text for node in root.findall(".//Parameter")]
         self.assertIn("--enable-nodejs", params)
 
@@ -28,6 +28,9 @@ class PluginContractTests(unittest.TestCase):
             "removalMethod", "outputFormat", "outputDestination", "chooseExportDestination", "clearExportDestination",
             "sam3Controls", "sam3PromptModes", "sam3TextInput", "sam3Setup",
             "sam3AccessPage", "sam3LicenseAccepted", "sam3Token", "sam3Install",
+            "corridorkeySetup", "corridorkeyHintMode", "corridorkeyModelScale",
+            "corridorkeyTemporal", "corridorkeyHintQuality", "corridorkeyDespill",
+            "corridorkeyLicensePage", "corridorkeyLicenseAccepted", "corridorkeyInstall",
         }
         found = set(re.findall(r'id="([^"]+)"', html))
         self.assertFalse(required_ids - found, "Missing controls: %s" % sorted(required_ids - found))
@@ -116,10 +119,10 @@ class PluginContractTests(unittest.TestCase):
 
     def test_service_routes_cover_workflow(self):
         code = (ROOT / "backend" / "service.py").read_text(encoding="utf-8")
-        for route in ("/api/load", "/api/points", "/api/tracking/clear", "/api/propagate", "/api/dedupe", "/api/matting", "/api/removal", "/api/export", "/api/job/cancel", "/api/models", "/api/sam3/status", "/api/sam3/prompt", "/api/sam3/setup"):
+        for route in ("/api/load", "/api/points", "/api/tracking/clear", "/api/propagate", "/api/dedupe", "/api/matting", "/api/removal", "/api/export", "/api/job/cancel", "/api/models", "/api/sam3/status", "/api/sam3/prompt", "/api/sam3/setup", "/api/corridorkey/status", "/api/corridorkey/setup"):
             self.assertIn(route, code)
         self.assertIn('payload.get("output_dir"', code)
-        for tag in ("segmentation_alpha", "segmentation_matte", "segmentation_bgcolor", "matting_alpha", "matting_matte", "matting_bgcolor", "object_removal"):
+        for tag in ("segmentation_alpha", "segmentation_matte", "segmentation_bgcolor", "matting_alpha", "matting_matte", "matting_bgcolor", "corridorkey_cutout", "object_removal"):
             self.assertIn('"%s"' % tag, code)
 
     def test_output_name_field_starts_as_source_name_placeholder(self):

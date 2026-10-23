@@ -10,7 +10,7 @@
 
 ## Prerequisites
 
-Install Sammie-Roto-2 separately and verify its desktop application before debugging Samosa. Set `SAMMIE_REPO` to that checkout. Do not install dependencies into the Samosa tree; the bridge deliberately runs in the upstream virtual environment. Optional SAM 3.1 development uses a second environment created by `installer/manage-sam31.ps1`; do not merge its dependencies into Sammie's environment.
+Install Sammie-Roto-2 separately and verify its desktop application before debugging Samosa. Set `SAMMIE_REPO` to that checkout. Do not install dependencies into the Samosa tree; the bridge deliberately runs in the upstream virtual environment. Optional SAM 3.1 and CorridorKey 2.0 development use separate environments created by `installer/manage-sam31.ps1` and `installer/manage-corridorkey.ps1`; do not merge their dependencies into Sammie's environment.
 
 ## Install a development build
 

@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.0"
+  #define MyAppVersion "1.4.0"
 #endif
 
 #define MyAppName "Samosa"
@@ -41,6 +41,7 @@ Source: "invoke-utf8-script.ps1"; DestDir: "{app}\installer"; Flags: ignoreversi
 Source: "download_models.py"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "manage-models.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "manage-sam31.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "manage-corridorkey.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "sam31_download.py"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion

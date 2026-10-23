@@ -4,10 +4,15 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-23
+
 - Fixed Windows SAM 3.1 setup by updating the Hugging Face downloader API, installing the complete minimal inference dependency set, validating the Triton CUDA kernel before marking the environment ready, and preserving actionable setup errors instead of wrapped command fragments.
 - Added explicit handling for gated-repository `403` responses so the panel explains account approval and token-account matching instead of displaying the raw request ID.
 - Fixed SAM 3.1 cold starts by separating worker readiness from model loading, running CUDA initialization on the worker main thread, and reporting startup phases instead of terminating a healthy worker after 30 seconds.
 - Fixed SAM 3.1 video sessions by passing absolute cross-process frame and mask paths, adapting the pinned upstream session signature, and treating empty detections as valid results.
+- Added optional CorridorKey 2.0 matting on Windows NVIDIA with tracked-mask, first-frame, and automatic key modes.
+- Added pinned, checksum-verified, license-gated CorridorKey source/model setup in an isolated Python and CUDA runtime.
+- Added frame-aligned alpha ingestion plus scene-linear EXR cutout preservation, sRGB PNG conversion, and alpha-capable video exports.
 
 ## [1.3.0] - 2026-09-04
 

@@ -4,7 +4,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Platforms: Windows and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555.svg)](docs/INSTALL.md)
 
-Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a local [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime, with optional isolated [SAM 3.1](https://github.com/facebookresearch/sam3) support, so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
+Samosa is an open-source, dockable rotoscoping panel for Adobe After Effects. It connects After Effects to a local [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) runtime, with optional isolated [SAM 3.1](https://github.com/facebookresearch/sam3) and [CorridorKey 2.0](https://github.com/nikopueringer/CorridorKey2.0) support, so object selection, tracking, matting, removal, export, and import stay inside the After Effects workflow.
 
 Samosa is an independent integration project. It is not an official Sammie-Roto-2 project and is not affiliated with or endorsed by Adobe.
 
@@ -22,6 +22,7 @@ The current release targets Windows and macOS with After Effects 2021 or newer t
 - SAM 2.1 selection and clip-wide object tracking on Windows and macOS
 - Optional SAM 3.1 point, box, text, and positive/negative example prompts on Windows NVIDIA
 - MatAnyone, MatAnyone2, and VideoMaMa matting adapters
+- Optional CorridorKey 2.0 green/blue-screen matting with tracked-mask, first-frame, or automatic hints and scene-linear EXR cutouts on Windows NVIDIA
 - MiniMax and OpenCV removal adapters
 - Mask cleanup, growth, antialiasing, and duplicate-frame controls
 - PNG, EXR, and video output with automatic import into the active composition
@@ -36,6 +37,7 @@ The current release targets Windows and macOS with After Effects 2021 or newer t
 - Windows: a supported NVIDIA, Intel, or CPU backend
 - macOS: Apple Silicon MPS acceleration or Intel CPU processing
 - SAM 3.1: Windows, an NVIDIA CUDA backend, accepted gated model access, and a Hugging Face read token
+- CorridorKey 2.0: Windows, an NVIDIA CUDA backend, substantial additional disk space, and acceptance of the separate Corridor Key Licence
 
 Samosa installers do not embed model weights or Adobe SDK files. They download a pinned Sammie-Roto-2 source revision, Python runtime, and selected checkpoints during installation or first use.
 
@@ -43,8 +45,8 @@ Samosa installers do not embed model weights or Adobe SDK files. They download a
 
 Download the installer for your platform from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest):
 
-- Windows: `Samosa-Setup-1.3.0.exe`
-- macOS: `Samosa-1.3.0-macOS.pkg`
+- Windows: `Samosa-Setup-1.4.0.exe`
+- macOS: `Samosa-1.4.0-macOS.pkg`
 
 Both installers create a local runtime and configure the After Effects CEP panel. See [Windows installation](docs/INSTALL.md) or [macOS installation](docs/INSTALL_MACOS.md).
 
@@ -55,6 +57,8 @@ Choose one model mode:
 - **Custom:** selects individual model packs and can opt into SAM 3.1 on Windows NVIDIA.
 
 SAM 3.1 weights are gated and are never bundled by Samosa. After receiving access, select **SAM 3.1** in the panel, acknowledge the Meta SAM License, enter a Hugging Face read token, and choose **Install**. The token is passed only to the setup child process and is not written to configuration, state, or logs.
+
+CorridorKey 2.0 is also never bundled. Select it under **Matting**, review and accept its separate license, then choose **Install CorridorKey**. Samosa downloads pinned upstream source, weights, and foundation models into an isolated runtime. CorridorKey's license restricts commercial use and paid inference; obtain written permission from Corridor before using this integration commercially.
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
@@ -94,7 +98,7 @@ See [Development](docs/DEVELOPMENT.md), [Architecture](docs/ARCHITECTURE.md), an
 
 Samosa source code is licensed under GPL-3.0. It directly integrates with the GPL-3.0 Sammie-Roto-2 runtime, so GPL-3.0 is the conservative and compatible release choice.
 
-Some optional engines exposed through Sammie-Roto-2 have separate noncommercial terms. In particular, MatAnyone uses the S-Lab noncommercial license, MiniMax Remover uses CC BY-NC 4.0, and VideoMaMa code uses CC BY-NC 4.0 while its model dependencies have separate Stability AI terms. SAM 3.1 source and weights use the separate Meta SAM License and gated model terms. Installing or downloading any component does not grant rights beyond its own license. Review [Third-Party Notices](THIRD_PARTY_NOTICES.md) before distributing Samosa or using optional engines commercially.
+Some optional engines exposed through Sammie-Roto-2 have separate noncommercial terms. In particular, MatAnyone uses the S-Lab noncommercial license, MiniMax Remover uses CC BY-NC 4.0, and VideoMaMa code uses CC BY-NC 4.0 while its model dependencies have separate Stability AI terms. SAM 3.1 source and weights use the separate Meta SAM License and gated model terms. CorridorKey 2.0 uses the separate Corridor Key Licence and requires written permission for commercial use. Installing or downloading any component does not grant rights beyond its own license. Review [Third-Party Notices](THIRD_PARTY_NOTICES.md) before distributing Samosa or using optional engines commercially.
 
 ## Upstream relationship
 
@@ -102,7 +106,7 @@ Samosa is maintained as a separate repository because it is an After Effects int
 
 ## Acknowledgements and connected projects
 
-Samosa exists because of the work in [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) by Zarxrax and contributors. The workflows it exposes connect to [SAM 2](https://github.com/facebookresearch/sam2), [SAM 3](https://github.com/facebookresearch/sam3), [EfficientTAM](https://github.com/yformer/EfficientTAM), [MatAnyone](https://github.com/pq-yang/MatAnyone), [MatAnyone2](https://github.com/pq-yang/MatAnyone2), [VideoMaMa](https://github.com/cvlab-kaist/VideoMaMa), and [MiniMax Remover](https://github.com/zibojia/MiniMax-Remover). Attribution here does not replace each project's license or model terms; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+Samosa exists because of the work in [Sammie-Roto-2](https://github.com/Zarxrax/Sammie-Roto-2) by Zarxrax and contributors. The workflows it exposes connect to [SAM 2](https://github.com/facebookresearch/sam2), [SAM 3](https://github.com/facebookresearch/sam3), [EfficientTAM](https://github.com/yformer/EfficientTAM), [MatAnyone](https://github.com/pq-yang/MatAnyone), [MatAnyone2](https://github.com/pq-yang/MatAnyone2), [VideoMaMa](https://github.com/cvlab-kaist/VideoMaMa), [MiniMax Remover](https://github.com/zibojia/MiniMax-Remover), and [CorridorKey 2.0](https://github.com/nikopueringer/CorridorKey2.0) by Niko Pueringer and Corridor Digital. Attribution here does not replace each project's license or model terms; see [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Contributing
 

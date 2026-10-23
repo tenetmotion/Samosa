@@ -1,6 +1,6 @@
 # Installing Samosa on Windows
 
-Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Samosa v1.3.0 pins Sammie-Roto-2 v2.4.0 at commit `6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06` and installs it into an isolated runtime. The EXE does not embed third-party source, model weights, or Hugging Face credentials.
+Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Samosa v1.4.0 pins Sammie-Roto-2 v2.4.0 at commit `6f2213dfd8bf15c54ef41b9c9eff7af2cfee1c06` and installs it into an isolated runtime. The EXE does not embed third-party source, model weights, or Hugging Face credentials.
 
 ## Requirements
 
@@ -12,11 +12,11 @@ Samosa is an After Effects panel and a local bridge to Sammie-Roto-2. Samosa v1.
 
 ## EXE installation
 
-Download `Samosa-Setup-1.3.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum and the Tenet, LLC Authenticode signature with:
+Download `Samosa-Setup-1.4.0.exe` and its checksum from the [latest GitHub release](https://github.com/tenetmotion/Samosa/releases/latest). Verify the checksum and the Tenet, LLC Authenticode signature with:
 
 ~~~powershell
-Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.3.0.exe
-Get-AuthenticodeSignature .\Samosa-Setup-1.3.0.exe |
+Get-FileHash -Algorithm SHA256 .\Samosa-Setup-1.4.0.exe
+Get-AuthenticodeSignature .\Samosa-Setup-1.4.0.exe |
     Select-Object Status, StatusMessage, @{Name="Publisher"; Expression={$_.SignerCertificate.Subject}}
 ~~~
 
@@ -36,6 +36,10 @@ Choose an installation mode:
 | Custom | Installs selected packs and can prepare SAM 3.1. |
 
 SAM 3.1 is only available in Windows Complete or Custom with NVIDIA CUDA. The installer shows a separate Meta SAM License acknowledgment. Its hidden post-install step installs the pinned source and isolated environment, never requests or consumes a token, and records `weights-pending`. Finish the gated weight download from the Samosa panel or interactive manager.
+
+CorridorKey 2.0 is an optional Windows NVIDIA matting engine installed from the panel after the main Samosa setup. Select **CorridorKey 2.0** under Matting, review and accept the separate Corridor Key Licence, then choose **Install CorridorKey**. This downloads a separate Python environment, the roughly 2.66 GB main checkpoint, and additional foundation models. Keep substantial free disk space available. The installation is idempotent and validates pinned source and checkpoint hashes.
+
+CorridorKey's terms prohibit paid inference and require written permission for commercial integration. Installation through Samosa does not grant commercial rights.
 
 Restart After Effects and open **Window > Extensions (Legacy) > Samosa**.
 
@@ -73,4 +77,4 @@ Run a newer EXE over the existing installation. Valid pinned source and checkpoi
 
 ## Troubleshooting
 
-For `Starting service`, confirm `runtime\Sammie-Roto-2\.venv\Scripts\python.exe` exists and read `logs\installer.log` plus the service log. For `weights-pending`, confirm Hugging Face access is granted to the token's account, use the interactive manager, and provide `HF_TOKEN` or its hidden prompt. SAM 3.1 rejects CPU and XPU backends.
+For `Starting service`, confirm `runtime\Sammie-Roto-2\.venv\Scripts\python.exe` exists and read `logs\installer.log` plus the service log. For `weights-pending`, confirm Hugging Face access is granted to the token's account, use the interactive manager, and provide `HF_TOKEN` or its hidden prompt. SAM 3.1 rejects CPU and XPU backends. CorridorKey setup logs appear in the same job bar and can be rerun safely after a network interruption.

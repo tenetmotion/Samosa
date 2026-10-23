@@ -96,13 +96,24 @@
 
     <section id="mattingPanel" class="mode-panel">
       <div class="form-grid">
-        <label>Model<select id="mattingModel"><option>MatAnyone2</option><option>MatAnyone</option><option>VideoMaMa</option></select></label>
-        <label>Resolution<select id="mattingResolution"><option>480</option><option selected>720</option><option>1080</option></select></label>
-        <label>Batch size<input id="mattingChunk" type="number" min="4" max="64" value="16"></label>
-        <label>Overlap<input id="mattingOverlap" type="number" min="0" max="16" value="2"></label>
-        <label>Grow<input id="mattingGrow" type="number" min="-20" max="20" value="0"></label>
-        <label>Gamma<input id="mattingGamma" type="number" min="0.1" max="4" step="0.1" value="1"></label>
+        <label>Model<select id="mattingModel"><option>MatAnyone2</option><option>MatAnyone</option><option>VideoMaMa</option><option value="CorridorKey2.0">CorridorKey 2.0</option></select></label>
+        <label class="matany-field">Resolution<select id="mattingResolution"><option>480</option><option selected>720</option><option>1080</option></select></label>
+        <label class="matany-field">Batch size<input id="mattingChunk" type="number" min="4" max="64" value="16"></label>
+        <label class="matany-field">Overlap<input id="mattingOverlap" type="number" min="0" max="16" value="2"></label>
+        <label class="matany-field">Grow<input id="mattingGrow" type="number" min="-20" max="20" value="0"></label>
+        <label class="matany-field">Gamma<input id="mattingGamma" type="number" min="0.1" max="4" step="0.1" value="1"></label>
+        <label class="corridorkey-field hidden">Hint<select id="corridorkeyHintMode"><option value="tracked">Tracked masks</option><option value="first">First-frame mask</option><option value="automatic">Automatic key</option></select></label>
+        <label class="corridorkey-field hidden">Model scale<select id="corridorkeyModelScale"><option value="1">Full</option><option value="0.6666667">Two-thirds</option><option value="0.5">Half</option></select></label>
+        <label class="corridorkey-field hidden">Temporal mode<select id="corridorkeyTemporal"><option value="auto">Automatic</option><option value="low_vram">Low VRAM</option><option value="frame">Frame independent</option></select></label>
+        <label class="corridorkey-field hidden">Hint quality<input id="corridorkeyHintQuality" type="number" min="0" max="1" step="0.05" value="0.75"></label>
+        <label class="corridorkey-field hidden">Despill<input id="corridorkeyDespill" type="number" min="0" max="1" step="0.05" value="0.5"></label>
         <label class="check span"><input id="combineObjects" type="checkbox"> Combine all objects</label>
+        <div id="corridorkeySetup" class="sam3-setup span hidden">
+          <div class="sam3-setup-copy"><strong id="corridorkeySetupTitle">CorridorKey 2.0 is not installed</strong><span id="corridorkeySetupReason">Install the optional isolated runtime and model assets.</span></div>
+          <button id="corridorkeyLicensePage" type="button">View license</button>
+          <label class="sam3-license-check"><input id="corridorkeyLicenseAccepted" type="checkbox"><span>I accept the separate Corridor Key Licence and understand commercial use requires written permission from Corridor.</span></label>
+          <button id="corridorkeyInstall" type="button" class="primary">Install CorridorKey</button>
+        </div>
       </div>
       <div class="preview-switch"><button data-view="matting-alpha" class="active">Alpha</button><button data-view="matting-matte">Matte</button></div>
       <button id="runMatting" class="primary wide">Run matting</button>
@@ -123,7 +134,7 @@
 
     <section id="outputPanel" class="mode-panel">
       <div class="form-grid">
-        <label>Output<select id="outputType"><option>Segmentation-Alpha</option><option>Segmentation-Matte</option><option>Segmentation-BGcolor</option><option>Matting-Alpha</option><option>Matting-Matte</option><option>Matting-BGcolor</option><option>ObjectRemoval</option></select></label>
+        <label>Output<select id="outputType"><option>Segmentation-Alpha</option><option>Segmentation-Matte</option><option>Segmentation-BGcolor</option><option>Matting-Alpha</option><option>Matting-Matte</option><option>Matting-BGcolor</option><option>CorridorKey-Cutout</option><option>ObjectRemoval</option></select></label>
         <label>Format<select id="outputFormat"><option value="png">PNG sequence</option><option value="exr">EXR sequence</option><option value="prores">ProRes</option><option value="ffv1">FFV1</option><option value="vp9">VP9</option><option value="x264">H.264</option><option value="x265">H.265</option></select></label>
         <label>Object<select id="exportObject"><option value="-1">All objects</option></select></label>
         <label>Quality<input id="quality" type="number" min="0" max="63" value="14"></label>

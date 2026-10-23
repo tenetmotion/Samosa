@@ -12,16 +12,16 @@
 ## Build the source archive
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.3.0
+powershell -ExecutionPolicy Bypass -File .\scripts\package-release.ps1 -Version 1.4.0
 $env:SAMOSA_ARTIFACT_SIGNING_DLIB = "C:\path\to\Azure.CodeSigning.Dlib.dll"
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.3.0 -Sign
-Get-AuthenticodeSignature .\dist\installer\Samosa-Setup-1.3.0.exe
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1 -Version 1.4.0 -Sign
+Get-AuthenticodeSignature .\dist\installer\Samosa-Setup-1.4.0.exe
 ```
 
 Run on macOS:
 
 ```bash
-./scripts/build-macos-installer.sh 1.3.0
+./scripts/build-macos-installer.sh 1.4.0
 ```
 
 The script validates the tree and writes a source directory and zip under `dist/`. Inspect both before publishing. GitHub source archives remain the canonical corresponding source for GPL releases.

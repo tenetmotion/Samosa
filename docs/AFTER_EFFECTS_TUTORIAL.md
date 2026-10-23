@@ -38,6 +38,18 @@ Scrub the result. On a frame where the mask drifts, add Include or Exclude corre
 
 Use **Matting** when hair, motion blur, transparency, or soft edges need a refined alpha. Select the model and resolution, then choose **Run matting**. Alpha and Matte toggle the viewer preview.
 
+For green- or blue-screen footage on Windows NVIDIA, select **CorridorKey 2.0**. On first use, review the linked Corridor Key Licence, acknowledge it, and choose **Install CorridorKey**. The source, model, and foundation assets are downloaded into an isolated runtime and are retained for later sessions.
+
+Choose a CorridorKey hint mode:
+
+| Hint | Behavior |
+| --- | --- |
+| Tracked masks | Uses the selected Samosa object's mask on every frame. Track the object first. This is the most controlled mode. |
+| First-frame mask | Uses frame 1 as an initial subject hint and lets CorridorKey carry it through the shot. |
+| Automatic key | Runs CorridorKey without Samosa masks for conventional green/blue-screen material. |
+
+Use **Full** model scale for final output, or lower it for faster previews. **Low VRAM** reduces temporal working memory; **Frame independent** removes temporal carry and can reduce consistency. Despill affects the generated cutout color, not the alpha matte. **Combine all objects** unions Samosa's masks into one hint.
+
 Use **Remove** when the selected object should be filled out of the shot. OpenCV is the lighter option; MiniMax Remover is model-based and has separate noncommercial license terms.
 
 ## Export back to After Effects
@@ -60,6 +72,9 @@ Samosa appends the selected object and output description automatically. For exa
 | Matting-Alpha | Refined RGBA isolation with soft edges |
 | Matting-Matte | Refined grayscale matte |
 | Matting-BGcolor | Refined subject over a background color |
+| CorridorKey-Cutout | CorridorKey's despilled RGBA cutout; EXR preserves scene-linear half-float pixels exactly |
 | ObjectRemoval | Filled plate with the selected object removed |
+
+For CorridorKey cutouts, use EXR for the highest-fidelity scene-linear round trip. PNG converts linear RGB to display sRGB. ProRes, FFV1, and VP9 are available for alpha-capable video output; H.264 and H.265 are rejected because they do not preserve the required alpha channel.
 
 Model availability and commercial-use rights vary. Review [Third-party notices](../THIRD_PARTY_NOTICES.md) before selecting a production engine.

@@ -1,6 +1,6 @@
 # Installing Samosa on macOS
 
-Samosa 1.3.0 provides an online PKG for Apple Silicon and Intel Macs. It installs a per-user Sammie-Roto-2 v2.4.0 runtime.
+Samosa 1.4.0 provides an online PKG for Apple Silicon and Intel Macs. It installs a per-user Sammie-Roto-2 v2.4.0 runtime. CorridorKey 2.0 remains unavailable in the macOS build.
 
 ## Requirements
 
@@ -17,12 +17,12 @@ SAM 3.1 is unsupported on macOS in this release. It requires the Windows NVIDIA 
 
 ## Install
 
-1. Download `Samosa-1.3.0-macOS.pkg` and its checksum from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest).
+1. Download `Samosa-1.4.0-macOS.pkg` and its checksum from the [latest release](https://github.com/tenetmotion/Samosa/releases/latest).
 2. Verify it in Terminal:
 
 ~~~bash
-shasum -a 256 ~/Downloads/Samosa-1.3.0-macOS.pkg
-cat ~/Downloads/Samosa-1.3.0-macOS-SHA256.txt
+shasum -a 256 ~/Downloads/Samosa-1.4.0-macOS.pkg
+cat ~/Downloads/Samosa-1.4.0-macOS-SHA256.txt
 ~~~
 
 3. Open the PKG and approve it in **System Settings > Privacy & Security** if Gatekeeper blocks the unsigned package.

@@ -66,10 +66,12 @@ Copy-Item -Path (Join-Path $PSScriptRoot "panel\*") -Destination $Target -Recurs
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "backend") -Destination (Join-Path $Target "backend") -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $Target "installer") -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-sam31.ps1") -Destination (Join-Path $Target "installer\manage-sam31.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-corridorkey.ps1") -Destination (Join-Path $Target "installer\manage-corridorkey.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\sam31_download.py") -Destination (Join-Path $Target "installer\sam31_download.py") -Force
 $PersistentInstaller = Join-Path $InstallRoot "installer"
 New-Item -ItemType Directory -Path $PersistentInstaller -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-sam31.ps1") -Destination (Join-Path $PersistentInstaller "manage-sam31.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\manage-corridorkey.ps1") -Destination (Join-Path $PersistentInstaller "manage-corridorkey.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "installer\sam31_download.py") -Destination (Join-Path $PersistentInstaller "sam31_download.py") -Force
 
 $Config = @{

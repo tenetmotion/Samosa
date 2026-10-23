@@ -6,7 +6,7 @@ Samosa separates installing a checkpoint on disk from loading a model into memor
 
 **Standard** installs SAM2 Base only. Existing Sammie packs are available on demand or through the model manager; missing packs download automatically when first requested. SAM 3.1 is not installed.
 
-**Complete** pre-downloads every model in the pinned Sammie-Roto-2 registry. On Windows NVIDIA, it can also prepare isolated SAM 3.1 source/runtime after explicit Meta SAM License and gated-access acknowledgment. The hidden installer always leaves gated SAM 3.1 weights in `weights-pending`; finish the download from the panel or interactive manager.
+**Complete** pre-downloads every model in the pinned Sammie-Roto-2 registry. On Windows NVIDIA, it can also prepare isolated SAM 3.1 source/runtime after explicit Meta SAM License and gated-access acknowledgment. The hidden installer always leaves gated SAM 3.1 weights in `weights-pending`; finish the download from the panel or interactive manager. CorridorKey is installed separately on demand from the Matting tab.
 
 **Custom** pre-downloads selected existing packs and can select SAM 3.1 on Windows NVIDIA. SAM 3.1 is managed outside Sammie's registry.
 
@@ -20,6 +20,27 @@ Samosa separates installing a checkpoint on disk from loading a model into memor
 | MatAnyone / MatAnyone2 | Matting | S-Lab noncommercial license |
 | VideoMaMa | Matting | CC BY-NC 4.0 code; separate Stability AI model terms |
 | MiniMax Remover | Removal | Additional noncommercial/model-host terms |
+| CorridorKey 2.0 | Green/blue-screen video matting and linear cutout | Separate Corridor Key Licence; written permission required for commercial use |
+
+## CorridorKey 2.0 metadata
+
+CorridorKey runs in `runtime\CorridorKey2.0` so its pinned Python 3.12, PyTorch 2.9.1, torchvision 0.24.1, and CUDA 12.8 wheel dependencies do not alter Sammie's environment. Samosa invokes the unmodified upstream CLI through a process boundary. It is available only on Windows NVIDIA backends in this release; macOS, CPU, and Intel XPU report unsupported.
+
+| Item | Pinned value |
+| --- | --- |
+| Official source | `nikopueringer/CorridorKey2.0` |
+| Source commit | `485f5e9ab759ead6138cc990776184b59d6ea971` |
+| Source archive SHA-256 | `9DB1ABA4597C739B5C4603D463EC2760984B3A3B74D2B320D1E7D07F2E329B07` |
+| Hugging Face model | `nikopueringer/CorridorKey2.0` |
+| Model revision | `cf44a8db3f024bb49fd59daa408848ccf05f7477` |
+| Main checkpoint size | `2661698720` bytes |
+| Main checkpoint SHA-256 | `C43596DE98CC8866D577C8A9F9EA239ACDF3F7A130FF24E25DB4375A50590436` |
+| Foundation statistics size | `18864` bytes |
+| Foundation statistics SHA-256 | `924783CEDDD293FD470126332CE328166FAEA6C4C8D2F36402D5B95187166AF3` |
+
+The on-demand setup also downloads CorridorKey's pinned RVM, MoGe-2, and C-RADIO foundation dependencies through the official upstream downloader. Samosa verifies the two CorridorKey-owned checkpoint files exactly and validates all required foundation assets before reporting the engine ready. No CorridorKey source or weights are embedded in Samosa releases.
+
+Review the [Corridor Key Licence](https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE) before setup. The license prohibits paid inference and requires written agreement for commercial software integration. Samosa's GPL-3.0 license does not override those terms.
 
 ## SAM 3.1 metadata
 
@@ -44,7 +65,7 @@ Source and environment markers make setup idempotent. Valid source and verified 
 
 ## Upstream model audit
 
-The v1.3.0 release audit was completed on 2026-09-04 against official project sources and the pinned Sammie-Roto-2 v2.4.0 registry.
+The v1.4.0 release audit was completed on 2026-10-23 against official project sources and the pinned Sammie-Roto-2 v2.4.0 registry.
 
 | Family | Result |
 | --- | --- |
@@ -54,6 +75,7 @@ The v1.3.0 release audit was completed on 2026-09-04 against official project so
 | VideoMaMa | The official integration still exposes its original checkpoint set; no compatible successor checkpoint was published for this adapter. |
 | MiniMax Remover | The official integration still exposes its original transformer and VAE checkpoint set. |
 | Stable Video Diffusion VAE | A newer standalone SVD release is not a drop-in replacement for the VAE revision expected by VideoMaMa, so it was not swapped blindly. |
+| CorridorKey | CorridorKey 2.0 is integrated as an isolated upstream engine; its weights and dependencies are not substituted or redistributed. |
 
 Sammie-Roto-2 v2.4.0 did not introduce a new model-registry key that required another Samosa control. Future releases should repeat this audit rather than changing checkpoint URLs independently of the upstream adapters.
 

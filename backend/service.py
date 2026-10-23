@@ -30,7 +30,8 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 43831
-VERSION = "1.3.0"
+VERSION = "1.4.0"
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 _progress_context = threading.local()
 OUTPUT_TAGS = {
     "Segmentation-Alpha": "segmentation_alpha",
@@ -39,6 +40,7 @@ OUTPUT_TAGS = {
     "Matting-Alpha": "matting_alpha",
     "Matting-Matte": "matting_matte",
     "Matting-BGcolor": "matting_bgcolor",
+    "CorridorKey-Cutout": "corridorkey_cutout",
     "ObjectRemoval": "object_removal",
 }
 
@@ -46,11 +48,14 @@ BACKEND_DIR = Path(__file__).resolve().parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 from sam3_bridge import Sam3Bridge, Sam3BridgeError
+from corridorkey_bridge import CorridorKeyError, CorridorKeyRunner
 
 
 def _backend_sha256():
     digest = hashlib.sha256()
-    for name in ("service.py", "sam3_bridge.py", "sam3_worker.py"):
+    for name in (
+        "service.py", "sam3_bridge.py", "sam3_worker.py", "corridorkey_bridge.py",
+    ):
         path = BACKEND_DIR / name
         if path.is_file():
             digest.update(name.encode("utf-8"))
@@ -316,6 +321,8 @@ class Engine:
         "show_outlines", "antialias", "show_all_points", "bgcolor",
         "matany_model", "matany_res", "matany_overlap", "matany_chunk",
         "matany_combined", "matany_grow", "matany_gamma", "inpaint_method",
+        "corridorkey_hint_mode", "corridorkey_hint_quality",
+        "corridorkey_temporal", "corridorkey_model_scale", "corridorkey_despill",
         "inpaint_radius", "inpaint_grow", "minimax_steps",
         "minimax_resolution", "minimax_vae_tiling", "in_point", "out_point",
         "object_names", "selected_object_id",
@@ -328,6 +335,8 @@ class Engine:
         sam3_python=None,
         sam3_repo=None,
         sam3_checkpoint=None,
+        corridorkey_python=None,
+        corridorkey_repo=None,
         install_root=None,
         backend=None,
     ):
@@ -348,6 +357,10 @@ class Engine:
         self.sam3_prompts = []
         self.sam3_object_ids = set()
         self.sam3_install_job_id = None
+        self.corridorkey_install_job_id = None
+        self.corridorkey_cutout_frames = []
+        self.corridorkey_output_object_id = None
+        self.corridorkey_settings = self._default_corridorkey_settings()
         self.matting_manager = None
         self.removal_manager = None
         inferred_root = (
@@ -375,11 +388,28 @@ class Engine:
             or os.environ.get("SAMOSA_SAM3_CHECKPOINT")
             or default_sam3_root / "models" / "sam3.1_multiplex.pt"
         ).resolve()
+        default_corridorkey_root = self.install_root / "runtime" / "CorridorKey2.0"
+        default_corridorkey_python = (
+            default_corridorkey_root / ".venv" / "Scripts" / "python.exe"
+            if os.name == "nt"
+            else default_corridorkey_root / ".venv" / "bin" / "python"
+        )
+        self.corridorkey_repo = Path(
+            corridorkey_repo
+            or os.environ.get("SAMOSA_CORRIDORKEY_REPO")
+            or default_corridorkey_root
+        ).resolve()
+        self.corridorkey_python = Path(
+            corridorkey_python
+            or os.environ.get("SAMOSA_CORRIDORKEY_PYTHON")
+            or default_corridorkey_python
+        ).resolve()
         self.backend = str(backend or os.environ.get("SAMOSA_BACKEND") or "").lower()
         self._load_modules()
         session_temp = Path(self.core.temp_dir).resolve()
         self.sam3_transport_dir = session_temp / "sam3_transport"
         self.sam3_frames_dir = session_temp / "sam3_frames"
+        self.corridorkey_dir = session_temp / "corridorkey"
 
     def _load_modules(self):
         if not self.repo.exists():
@@ -407,6 +437,15 @@ class Engine:
         self._isolate_ae_session()
         self._patch_headless_ui()
 
+    @staticmethod
+    def _default_corridorkey_settings():
+        return {
+            "corridorkey_hint_mode": "tracked",
+            "corridorkey_hint_quality": 0.75,
+            "corridorkey_temporal": "auto",
+            "corridorkey_model_scale": 1.0,
+            "corridorkey_despill": 0.5,
+        }
     def _isolate_ae_session(self):
         """Keep the panel session separate from the standalone Sammie app."""
         session_root = os.environ.get("SAMOSA_SESSION_ROOT")
@@ -561,8 +600,85 @@ class Engine:
             "job": job,
         }
 
+    def corridorkey_status(self):
+        install_state = self._install_state()
+        backend = getattr(self, "backend", "") or str(install_state.get("backend") or "").lower()
+        windows = os.name == "nt"
+        nvidia_backend = backend in ("cu126", "cu130")
+        if windows and not backend and self.mock:
+            nvidia_backend = True
+        supported = windows and nvidia_backend
+        install_root = Path(getattr(self, "install_root", Path(__file__).resolve().parents[1]))
+        repo = Path(getattr(self, "corridorkey_repo", install_root / "runtime" / "CorridorKey2.0"))
+        python_path = Path(getattr(
+            self, "corridorkey_python",
+            repo / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python"),
+        ))
+        source_installed = (repo / "infer.py").is_file()
+        runtime_installed = python_path.is_file()
+        weight = repo / "weights" / "corridorkey_v2.safetensors"
+        stats = repo / "weights" / "foundation_stats.safetensors"
+        required_assets = (
+            (weight, 2661698720),
+            (stats, 18864),
+            (repo / "vfms" / "rvm" / "pretrain_rvm_small16_256_204031069.npz", None),
+            (repo / "vfms" / "moge" / "model.pt", None),
+            (repo / "vfms" / "cradio" / "C-RADIOv4-SO400M", None),
+        )
+        assets_available = True
+        for path, expected_size in required_assets:
+            try:
+                if not path.exists() or (
+                    expected_size is not None and path.stat().st_size != expected_size
+                ):
+                    assets_available = False
+                    break
+            except OSError:
+                assets_available = False
+                break
+        available = supported and source_installed and runtime_installed and assets_available
+        if not windows:
+            reason = "The open CorridorKey runtime currently requires Windows with NVIDIA CUDA."
+        elif not nvidia_backend:
+            reason = "CorridorKey requires Samosa's NVIDIA CUDA backend."
+        elif not source_installed or not runtime_installed:
+            reason = "Install the optional isolated CorridorKey 2.0 runtime."
+        elif not assets_available:
+            reason = "Download and verify the CorridorKey 2.0 model assets."
+        else:
+            reason = ""
+        job = None
+        install_job_id = getattr(self, "corridorkey_install_job_id", None)
+        jobs = getattr(self, "jobs", {})
+        if install_job_id in jobs:
+            job = jobs[install_job_id].payload()
+        return {
+            "id": "CorridorKey2.0",
+            "label": "CorridorKey 2.0",
+            "supported": supported,
+            "available": available,
+            "availability": "ready" if available else "unavailable",
+            "status": "ready" if available else ("unsupported" if not supported else "not-installed"),
+            "reason": reason,
+            "source_installed": source_installed,
+            "runtime_installed": runtime_installed,
+            "weights_available": assets_available,
+            "source_revision": "485f5e9ab759ead6138cc990776184b59d6ea971",
+            "model_revision": "cf44a8db3f024bb49fd59daa408848ccf05f7477",
+            "license_url": "https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE",
+            "capabilities": {
+                "green_screen": True,
+                "blue_screen": True,
+                "full_hint": True,
+                "first_frame_hint": True,
+                "linear_exr_cutout": True,
+            },
+            "job": job,
+        }
+
     def models(self):
         sam3 = self.sam3_status()
+        corridorkey = self.corridorkey_status()
         return {
             "models": [
                 {
@@ -578,7 +694,13 @@ class Engine:
                     "capabilities": {"prompts": {"point": True}},
                 },
                 sam3,
-            ]
+            ],
+            "matting_models": [
+                {"id": "MatAnyone2", "label": "MatAnyone2", "available": True},
+                {"id": "MatAnyone", "label": "MatAnyone", "available": True},
+                {"id": "VideoMaMa", "label": "VideoMaMa", "available": True},
+                corridorkey,
+            ],
         }
 
     def health(self):
@@ -607,6 +729,9 @@ class Engine:
             self.core.removal_dir,
         ):
             os.makedirs(folder, exist_ok=True)
+        self.corridorkey_dir.mkdir(parents=True, exist_ok=True)
+        self.corridorkey_cutout_frames = []
+        self.corridorkey_output_object_id = None
 
     def _write_decoded_frame(self, frame, output_frame_number, frame_format):
         array = frame.to_ndarray(format="bgr24")
@@ -721,6 +846,9 @@ class Engine:
             self.sam3_object_ids = set()
             self.matting_manager = None
             self.removal_manager = None
+            self.corridorkey_cutout_frames = []
+            self.corridorkey_output_object_id = None
+            self.corridorkey_settings = self._default_corridorkey_settings()
             self.settings_mgr.create_new_session(str(source))
             frame_format = "png"
             suffix = source.suffix.lower()
@@ -809,6 +937,8 @@ class Engine:
                 if os.path.isdir(os.path.join(self.core.mask_dir, name))
                 and os.listdir(os.path.join(self.core.mask_dir, name))
             ])
+        serialized_settings = asdict(settings)
+        serialized_settings.update(self.corridorkey_settings)
         return {
             "loaded": bool(self.loaded_path),
             "path": self.loaded_path,
@@ -823,7 +953,7 @@ class Engine:
             "trimmed": bool(self.trimmed),
             "points": list(self.points),
             "object_ids": object_ids,
-            "settings": asdict(settings),
+            "settings": serialized_settings,
             "segmentation_ready": (
                 self.sam3_session_id is not None
                 if selected_model == "SAM3.1"
@@ -841,7 +971,10 @@ class Engine:
             raise ApiError("Unsupported settings: %s" % ", ".join(unknown))
         previous_model = self._selected_sam_model()
         for key, value in values.items():
-            self.settings_mgr.set_session_setting(key, value)
+            if key.startswith("corridorkey_"):
+                self.corridorkey_settings[key] = value
+            else:
+                self.settings_mgr.set_session_setting(key, value)
         selected_model = str(values.get("sam_model", previous_model))
         if selected_model != previous_model:
             self.sam_manager = None
@@ -1338,6 +1471,84 @@ class Engine:
         self.sam3_install_job_id = job["id"]
         return job
 
+    def setup_corridorkey(self, payload):
+        if not bool(payload.get("accept_license")):
+            raise ApiError("Accept the Corridor Key Licence before installing CorridorKey 2.0")
+        status = self.corridorkey_status()
+        if not status["supported"]:
+            raise ApiError(status["reason"], 409)
+        manager = self.install_root / "installer" / "manage-corridorkey.ps1"
+        if not manager.is_file():
+            raise ApiError("The CorridorKey setup tool is not installed", 409)
+        if self.corridorkey_install_job_id in self.jobs:
+            existing = self.jobs[self.corridorkey_install_job_id]
+            if existing.status in ("queued", "running"):
+                return existing.payload()
+        backend = self.backend or str(self._install_state().get("backend") or "cu130")
+
+        def run(job):
+            powershell = Path(
+                os.environ.get("SystemRoot", r"C:\Windows")
+            ) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            command = [
+                str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(manager), "-InstallRoot", str(self.install_root),
+                "-Backend", backend, "-Install", "-DownloadModels",
+                "-AcceptCorridorKeyLicense", "-NonInteractive",
+            ]
+            job.message = "Preparing isolated CorridorKey 2.0 runtime"
+            job.progress = 2
+            process = subprocess.Popen(
+                command,
+                cwd=str(self.install_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            job.process = process
+            recent_output = deque(maxlen=40)
+            phases = (
+                ("Downloading pinned CorridorKey", 5),
+                ("Installing CorridorKey Python", 15),
+                ("Downloading CorridorKey model", 30),
+                ("Validating CorridorKey", 95),
+            )
+            try:
+                for line in process.stdout or ():
+                    message = line.strip()
+                    if not message:
+                        continue
+                    recent_output.append(message)
+                    for marker, progress in phases:
+                        if marker in message:
+                            job.message = marker
+                            job.progress = max(job.progress, progress)
+                            break
+                return_code = process.wait()
+            finally:
+                job.process = None
+            if job.cancelled:
+                return {"cancelled": True}
+            if return_code != 0:
+                diagnostic = " | ".join(list(recent_output)[-8:])
+                raise RuntimeError(diagnostic or "CorridorKey setup failed")
+            refreshed = self.corridorkey_status()
+            if not refreshed["available"]:
+                raise RuntimeError(refreshed["reason"] or "CorridorKey setup is incomplete")
+            return {
+                "available": True,
+                "source_revision": refreshed["source_revision"],
+                "model_revision": refreshed["model_revision"],
+            }
+
+        job = self._new_job("corridorkey setup", run)
+        self.corridorkey_install_job_id = job["id"]
+        return job
+
     def _ensure_segmenter(self):
         self._ensure_loaded()
         if self._selected_sam_model() == "SAM3.1":
@@ -1470,6 +1681,13 @@ class Engine:
     def frame_png(self, frame: int, view: str, object_id=None):
         self._ensure_loaded()
         frame = max(0, min(int(frame), self.core.VideoInfo.total_frames - 1))
+        if view == "corridorkey-cutout":
+            array = self._corridorkey_cutout_frame(frame)
+            encoded_array = self.cv2.cvtColor(array, self.cv2.COLOR_RGBA2BGRA)
+            ok, encoded = self.cv2.imencode(".png", encoded_array)
+            if not ok:
+                raise RuntimeError("Could not encode CorridorKey preview")
+            return encoded.tobytes()
         view_modes = {
             "edit": "Segmentation-Edit", "segmentation-matte": "Segmentation-Matte",
             "segmentation-alpha": "Segmentation-Alpha", "segmentation-bgcolor": "Segmentation-BGcolor",
@@ -1605,12 +1823,126 @@ class Engine:
 
         return self._new_job("propagation", run)
 
+    def _corridorkey_setting(self, key, default=None):
+        return self.corridorkey_settings.get(key, default)
+
+    def _prepare_corridorkey_hint(self):
+        hint_mode = str(self._corridorkey_setting("corridorkey_hint_mode", "tracked"))
+        combined = bool(self.settings_mgr.get_session_setting("matany_combined", False))
+        object_id = int(self.settings_mgr.get_session_setting("selected_object_id", 0))
+        if hint_mode == "automatic":
+            return None, object_id, combined
+        if hint_mode not in ("tracked", "first"):
+            raise ApiError("Unsupported CorridorKey hint mode: %s" % hint_mode)
+        if not self.points:
+            raise ApiError("Add and track an object before using a CorridorKey mask hint")
+
+        hint_dir = self.corridorkey_dir / "hints"
+        if hint_dir.exists():
+            shutil.rmtree(hint_dir)
+        hint_dir.mkdir(parents=True)
+        frames = range(self.core.VideoInfo.total_frames) if hint_mode == "tracked" else range(1)
+        filter_id = None if combined else object_id
+        for frame_number in frames:
+            mask = self.core.load_masks_for_frame(
+                frame_number, self.points, return_combined=True,
+                object_id_filter=filter_id,
+            )
+            if mask is None:
+                raise ApiError("No tracked mask is available for frame %d" % (frame_number + 1))
+            target = hint_dir / ("hint_%06d.png" % frame_number)
+            if not self.cv2.imwrite(str(target), mask):
+                raise RuntimeError("Could not write CorridorKey hint frame %d" % (frame_number + 1))
+        if hint_mode == "first":
+            return hint_dir / "hint_000000.png", object_id, combined
+        return hint_dir, object_id, combined
+
+    def _ingest_corridorkey_alpha(self, alpha_frames, object_id):
+        if os.path.exists(self.core.matting_dir):
+            shutil.rmtree(self.core.matting_dir)
+        os.makedirs(self.core.matting_dir, exist_ok=True)
+        for frame_number, source in enumerate(alpha_frames):
+            alpha = self.cv2.imread(str(source), self.cv2.IMREAD_UNCHANGED)
+            if alpha is None:
+                raise CorridorKeyError("Could not read CorridorKey alpha frame %s" % source)
+            if alpha.ndim == 3:
+                alpha = alpha[:, :, 0]
+            if alpha.shape[:2] != (self.core.VideoInfo.height, self.core.VideoInfo.width):
+                alpha = self.cv2.resize(
+                    alpha, (self.core.VideoInfo.width, self.core.VideoInfo.height),
+                    interpolation=self.cv2.INTER_LINEAR,
+                )
+            if alpha.dtype != self.np.uint8:
+                alpha = self.np.clip(alpha.astype(self.np.float32), 0.0, 1.0)
+                alpha = self.np.rint(alpha * 255.0).astype(self.np.uint8)
+            target_dir = Path(self.core.matting_dir) / ("%05d" % frame_number)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            if not self.cv2.imwrite(str(target_dir / ("%d.png" % object_id)), alpha):
+                raise RuntimeError("Could not import CorridorKey alpha frame %d" % (frame_number + 1))
+
+    def _run_corridorkey(self, job):
+        status = self.corridorkey_status()
+        if not status["available"]:
+            raise ApiError(status["reason"] or "CorridorKey 2.0 is not ready", 409)
+        if self.corridorkey_dir.exists():
+            shutil.rmtree(self.corridorkey_dir)
+        output_dir = self.corridorkey_dir / "output"
+        temp_dir = self.corridorkey_dir / "temp"
+        output_dir.mkdir(parents=True)
+        temp_dir.mkdir(parents=True)
+        hint_path, object_id, combined = self._prepare_corridorkey_hint()
+        output_object_id = 0 if combined else object_id
+        runner = CorridorKeyRunner(self.corridorkey_python, self.corridorkey_repo)
+        command = runner.build_command(
+            input_dir=self.core.frames_dir,
+            output_dir=output_dir,
+            temp_dir=temp_dir,
+            fps=self.core.VideoInfo.fps,
+            hint_mode=str(self._corridorkey_setting("corridorkey_hint_mode", "tracked")),
+            hint_path=hint_path,
+            hint_quality=float(self._corridorkey_setting("corridorkey_hint_quality", 0.75)),
+            temporal=str(self._corridorkey_setting("corridorkey_temporal", "auto")),
+            model_scale=float(self._corridorkey_setting("corridorkey_model_scale", 1.0)),
+            despill=float(self._corridorkey_setting("corridorkey_despill", 0.5)),
+        )
+        job.message = "Starting CorridorKey 2.0"
+        job.progress = 5
+        runner.run(command, job)
+        if job.cancelled:
+            return {"cancelled": True}
+        expected = int(self.core.VideoInfo.total_frames)
+        alpha_frames = runner.discover_frames(output_dir, "alpha", expected)
+        cutout_frames = runner.discover_frames(output_dir, "cutout", expected)
+        self._ingest_corridorkey_alpha(alpha_frames, output_object_id)
+        if not any(int(point.get("object_id", -1)) == output_object_id for point in self.points):
+            self.points.append({
+                "frame": 0, "object_id": output_object_id, "positive": True,
+                "x": -1, "y": -1, "synthetic": True,
+            })
+            self.settings_mgr.save_points(self.points)
+        self.corridorkey_cutout_frames = [str(path) for path in cutout_frames]
+        self.corridorkey_output_object_id = output_object_id
+        job.progress = 100
+        job.message = "CorridorKey 2.0 complete"
+        return {
+            "model": "CorridorKey2.0", "frames": expected,
+            "object_id": output_object_id, "combined": combined,
+            "cutout_available": True,
+        }
+
     def run_matting(self):
         self._ensure_loaded()
-        if not self.points:
+        model = str(self.settings_mgr.get_session_setting("matany_model", "MatAnyone2"))
+        corridor_automatic = (
+            model == "CorridorKey2.0"
+            and self._corridorkey_setting("corridorkey_hint_mode", "tracked") == "automatic"
+        )
+        if not self.points and not corridor_automatic:
             raise ApiError("Add at least one object point first")
 
         def run(job):
+            if model == "CorridorKey2.0" and not self.mock:
+                return self._run_corridorkey(job)
             if self.mock:
                 for frame in range(self.core.VideoInfo.total_frames):
                     src_dir = os.path.join(self.core.mask_dir, "%05d" % frame)
@@ -1622,7 +1954,7 @@ class Engine:
                             mask = self.cv2.GaussianBlur(mask, (7, 7), 0)
                             self.cv2.imwrite(os.path.join(dst_dir, name), mask)
                     job.progress = int((frame + 1) * 100 / self.core.VideoInfo.total_frames)
-                return {"model": "mock"}
+                return {"model": model if model == "CorridorKey2.0" else "mock"}
             self.matting_manager = self.create_matting_manager()
             if self.matting_manager.load_matting_model(parent_window=None) is None:
                 raise RuntimeError("Could not load matting model")
@@ -1630,7 +1962,7 @@ class Engine:
             result = self.matting_manager.run_matting(self.points, ParentShim(self.settings_mgr), combined=combined)
             if result in (0, False):
                 raise RuntimeError("Matting cancelled or failed")
-            return {"model": self.settings_mgr.get_session_setting("matany_model")}
+            return {"model": model}
 
         return self._new_job("matting", run)
 
@@ -1707,8 +2039,33 @@ class Engine:
             from fractions import Fraction
             from sammie.export_formats import FormatRegistry
             fmt = FormatRegistry.get_format(format_id)
-            if output_type not in fmt.get_available_output_types():
+            corridor_cutout = output_type == "CorridorKey-Cutout"
+            if corridor_cutout and len(self.corridorkey_cutout_frames) != int(self.core.VideoInfo.total_frames):
+                raise ApiError("Run CorridorKey 2.0 before exporting its cutout", 409)
+            if corridor_cutout and format_id not in ("png", "exr", "prores", "ffv1", "vp9"):
+                raise ApiError("CorridorKey cutouts require PNG, EXR, ProRes, FFV1, or VP9 alpha output")
+            if not corridor_cutout and output_type not in fmt.get_available_output_types():
                 raise ApiError("%s does not support %s" % (fmt.display_name, output_type))
+            if corridor_cutout and format_id == "exr":
+                first = None
+                for frame_number, source in enumerate(self.corridorkey_cutout_frames):
+                    if job.cancelled:
+                        break
+                    target = output_root / ("%s.%04d.exr" % (base, frame_number))
+                    shutil.copy2(source, target)
+                    if first is None:
+                        first = target
+                    job.progress = int((frame_number + 1) * 100 / self.core.VideoInfo.total_frames)
+                if first is None:
+                    raise RuntimeError("Exporter produced no files")
+                return {
+                    "path": str(first), "sequence": True, "folder": str(output_root),
+                    "fps": float(self.core.VideoInfo.fps),
+                    "frame_count": len(self.corridorkey_cutout_frames),
+                    "trimmed": bool(self.trimmed),
+                    "source_start_time": self.source_start_time,
+                    "source_end_time": self.source_end_time,
+                }
             if fmt.is_sequence and format_id == "png":
                 first = None
                 frame_count = 0
@@ -1767,7 +2124,7 @@ class Engine:
             stream = container.add_stream(fmt.get_codec_name(), rate=fps)
             stream.width = self.core.VideoInfo.width
             stream.height = self.core.VideoInfo.height
-            has_alpha = "Alpha" in output_type
+            has_alpha = "Alpha" in output_type or corridor_cutout
             stream.pix_fmt = fmt.get_pixel_format(has_alpha)
             for key, value in fmt.get_codec_options(quality).items():
                 stream.options[key] = str(value)
@@ -1805,6 +2162,8 @@ class Engine:
         return self._new_job("export", run)
 
     def _export_frame(self, frame_number, output_type, object_id):
+        if output_type == "CorridorKey-Cutout":
+            return self._corridorkey_cutout_frame(frame_number)
         options = {"view_mode": output_type, "antialias": True, "show_removal_mask": False}
         if output_type.endswith("BGcolor"):
             options["bgcolor"] = self.settings_mgr.get_session_setting("bgcolor", (0, 255, 0))
@@ -1815,6 +2174,26 @@ class Engine:
         if array is None:
             raise RuntimeError("Could not render frame %d for %s" % (frame_number, output_type))
         return array
+
+    def _corridorkey_cutout_frame(self, frame_number):
+        if frame_number < 0 or frame_number >= len(self.corridorkey_cutout_frames):
+            raise RuntimeError("CorridorKey cutout frame %d is unavailable" % (frame_number + 1))
+        bgra = self.cv2.imread(
+            self.corridorkey_cutout_frames[frame_number], self.cv2.IMREAD_UNCHANGED
+        )
+        if bgra is None or bgra.ndim != 3 or bgra.shape[2] < 4:
+            raise RuntimeError("Could not read CorridorKey cutout frame %d" % (frame_number + 1))
+        linear_rgb = self.np.clip(bgra[:, :, 2::-1].astype(self.np.float32), 0.0, None)
+        srgb = self.np.where(
+            linear_rgb <= 0.0031308,
+            12.92 * linear_rgb,
+            1.055 * self.np.power(linear_rgb, 1.0 / 2.4) - 0.055,
+        )
+        rgb = self.np.rint(self.np.clip(srgb, 0.0, 1.0) * 255.0).astype(self.np.uint8)
+        alpha = self.np.rint(
+            self.np.clip(bgra[:, :, 3].astype(self.np.float32), 0.0, 1.0) * 255.0
+        ).astype(self.np.uint8)
+        return self.np.dstack((rgb, alpha))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1866,6 +2245,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.engine.models())
             if parsed.path == "/api/sam3/status":
                 return self._json(self.engine.sam3_status())
+            if parsed.path == "/api/corridorkey/status":
+                return self._json(self.engine.corridorkey_status())
             if parsed.path == "/api/job":
                 return self._json(self.engine.get_job(query.get("id", [""])[0]))
             if parsed.path == "/api/frame":
@@ -1917,6 +2298,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/points/clear": self.engine.clear_points,
                 "/api/sam3/prompt": lambda: self.engine.sam3_prompt(body),
                 "/api/sam3/setup": lambda: self.engine.setup_sam3(body),
+                "/api/corridorkey/setup": lambda: self.engine.setup_corridorkey(body),
                 "/api/tracking/clear": self.engine.clear_tracking,
                 "/api/propagate": self.engine.propagate,
                 "/api/dedupe": lambda: self.engine.deduplicate(body.get("threshold", 0.8)),
@@ -1955,6 +2337,12 @@ def main():
     parser.add_argument(
         "--sam3-checkpoint", default=os.environ.get("SAMOSA_SAM3_CHECKPOINT")
     )
+    parser.add_argument(
+        "--corridorkey-python", default=os.environ.get("SAMOSA_CORRIDORKEY_PYTHON")
+    )
+    parser.add_argument(
+        "--corridorkey-repo", default=os.environ.get("SAMOSA_CORRIDORKEY_REPO")
+    )
     args = parser.parse_args()
     if not args.repo:
         parser.error("--repo or SAMMIE_REPO is required")
@@ -1964,6 +2352,8 @@ def main():
         sam3_python=args.sam3_python,
         sam3_repo=args.sam3_repo,
         sam3_checkpoint=args.sam3_checkpoint,
+        corridorkey_python=args.corridorkey_python,
+        corridorkey_repo=args.corridorkey_repo,
         install_root=args.install_root,
         backend=args.backend,
     )

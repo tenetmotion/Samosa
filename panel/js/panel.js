@@ -36,7 +36,7 @@
 
   function localBackendSha256() {
     var digest = crypto.createHash("sha256");
-    ["service.py", "sam3_bridge.py", "sam3_worker.py"].forEach(function (name) {
+    ["service.py", "sam3_bridge.py", "sam3_worker.py", "corridorkey_bridge.py"].forEach(function (name) {
       var file = path.join(extensionPath, "backend", name);
       if (!fs.existsSync(file)) return;
       digest.update(name, "utf8");
@@ -68,6 +68,8 @@
   var sam3ModelEntry = null;
   var sam3PromptMode = "point";
   var sam3StatusTimer = null;
+  var corridorkeyStatus = null;
+  var corridorkeyStatusTimer = null;
   var sam3Drag = null;
   var suppressNextViewerClick = false;
 
@@ -397,6 +399,11 @@
       matany_model: el("mattingModel").value, matany_res: number("mattingResolution"),
       matany_chunk: number("mattingChunk"), matany_overlap: number("mattingOverlap"),
       matany_grow: number("mattingGrow"), matany_gamma: number("mattingGamma"), matany_combined: el("combineObjects").checked,
+      corridorkey_hint_mode: el("corridorkeyHintMode").value,
+      corridorkey_hint_quality: number("corridorkeyHintQuality"),
+      corridorkey_temporal: el("corridorkeyTemporal").value,
+      corridorkey_model_scale: number("corridorkeyModelScale"),
+      corridorkey_despill: number("corridorkeyDespill"),
       inpaint_method: el("opencvMethod").value, inpaint_radius: number("opencvRadius"), inpaint_grow: number("inpaintGrow"),
       minimax_resolution: number("minimaxResolution"), minimax_steps: number("minimaxSteps"), minimax_vae_tiling: el("vaeTiling").checked
     };
@@ -441,6 +448,16 @@
         [].some.call(el("samModel").options, function (option) { return option.value === state.settings.sam_model; })) {
       el("samModel").value = state.settings.sam_model;
     }
+    if (state.settings) {
+      var fields = {
+        matany_model: "mattingModel", corridorkey_hint_mode: "corridorkeyHintMode",
+        corridorkey_temporal: "corridorkeyTemporal", corridorkey_model_scale: "corridorkeyModelScale",
+        corridorkey_hint_quality: "corridorkeyHintQuality", corridorkey_despill: "corridorkeyDespill"
+      };
+      Object.keys(fields).forEach(function (key) {
+        if (state.settings[key] !== undefined) el(fields[key]).value = String(state.settings[key]);
+      });
+    }
     el("frameSlider").max = Math.max(0, state.total_frames - 1);
     frame = Math.max(0, Math.min(frame, state.total_frames - 1));
     el("frameSlider").value = frame;
@@ -451,6 +468,7 @@
     updateObjects();
     updatePointList();
     updateSam3Controls();
+    updateCorridorKeyControls();
     refreshFrame();
   }
   function refreshFrame() {
@@ -680,6 +698,57 @@
   function sam3Ready() {
     return sam3ModelSelected(el("samModel").value) && sam3Availability(sam3Status, sam3ModelEntry);
   }
+
+  function corridorkeySelected() { return el("mattingModel").value === "CorridorKey2.0"; }
+  function corridorkeyReady() { return !!(corridorkeyStatus && corridorkeyStatus.available === true); }
+  function updateCorridorKeyControls() {
+    var selected = corridorkeySelected();
+    [].forEach.call(document.querySelectorAll(".matany-field"), function (node) { node.classList.toggle("hidden", selected); });
+    [].forEach.call(document.querySelectorAll(".corridorkey-field"), function (node) { node.classList.toggle("hidden", !selected); });
+    var setup = el("corridorkeySetup");
+    if (!selected) { setup.classList.add("hidden"); return; }
+    var active = sam3JobActive(corridorkeyStatus);
+    var supported = !corridorkeyStatus || corridorkeyStatus.supported !== false;
+    var available = corridorkeyReady();
+    setup.classList.toggle("hidden", available);
+    el("corridorkeySetupTitle").textContent = supported ? "CorridorKey 2.0 is not installed" : "CorridorKey 2.0 is unavailable";
+    el("corridorkeySetupReason").textContent = active ? "CorridorKey setup is in progress." : ((corridorkeyStatus && corridorkeyStatus.reason) || "Install the optional isolated runtime and model assets.");
+    el("corridorkeyInstall").disabled = !supported || active || !el("corridorkeyLicenseAccepted").checked;
+    el("corridorkeyLicenseAccepted").disabled = !supported || active;
+  }
+  async function refreshCorridorKeyStatus() {
+    if (!corridorkeySelected()) {
+      if (corridorkeyStatusTimer) clearTimeout(corridorkeyStatusTimer);
+      corridorkeyStatusTimer = null;
+      updateCorridorKeyControls();
+      return;
+    }
+    try { corridorkeyStatus = await api("GET", "/api/corridorkey/status"); }
+    catch (e) { corridorkeyStatus = { available: false, reason: "CorridorKey status unavailable." }; }
+    updateCorridorKeyControls();
+    if (sam3JobActive(corridorkeyStatus)) {
+      if (corridorkeyStatusTimer) clearTimeout(corridorkeyStatusTimer);
+      corridorkeyStatusTimer = setTimeout(refreshCorridorKeyStatus, 1000);
+    }
+  }
+  function openCorridorKeyLicense() {
+    var url = (corridorkeyStatus && corridorkeyStatus.license_url) || "https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE";
+    try { window.cep.util.openURLInDefaultBrowser(url); }
+    catch (e) { setStatus(e.message, "error"); }
+  }
+  async function installCorridorKey() {
+    if (!el("corridorkeyLicenseAccepted").checked) {
+      setStatus("Accept the Corridor Key Licence before installing CorridorKey 2.0", "error");
+      return;
+    }
+    try {
+      setStatus("Starting CorridorKey 2.0 setup...");
+      var setupJob = await api("POST", "/api/corridorkey/setup", { accept_license: true });
+      corridorkeyStatus = { available: false, job: setupJob, reason: "CorridorKey setup is in progress." };
+      updateCorridorKeyControls();
+      await monitorJob(setupJob, "CorridorKey setup", refreshCorridorKeyStatus, false);
+    } catch (e) { setStatus(e.message, "error"); }
+  }
   async function sendSam3Prompt(payload, successMessage) {
     if (!state || !state.loaded) {
       setStatus("Load footage before adding a SAM 3.1 prompt", "error");
@@ -861,6 +930,15 @@
     el("deduplicate").onclick = function () { startJob("/api/dedupe", { threshold: number("dedupeThreshold") }, "Deduplication"); };
     el("runMatting").onclick = function () {
       var model = el("mattingModel").value;
+      if (model === "CorridorKey2.0") {
+        if (!corridorkeyReady()) {
+          updateCorridorKeyControls();
+          setStatus("Install CorridorKey 2.0 before running matting", "error");
+          return;
+        }
+        startJob("/api/matting", {}, "CorridorKey matting");
+        return;
+      }
       var terms = model === "VideoMaMa"
         ? "CC BY-NC 4.0 terms plus separate Stability AI Community License terms for its SVD VAE dependency"
         : "the S-Lab noncommercial license";
@@ -908,6 +986,16 @@
     el("sam3Token").oninput = updateSam3Controls;
     el("sam3LicenseAccepted").onchange = updateSam3Controls;
     el("sam3Install").onclick = installSam3;
+    el("mattingModel").onchange = async function () {
+      updateCorridorKeyControls();
+      if (state) {
+        try { await saveSettings(); } catch (e) { setStatus(e.message, "error"); }
+      }
+      if (corridorkeySelected()) refreshCorridorKeyStatus();
+    };
+    el("corridorkeyLicenseAccepted").onchange = updateCorridorKeyControls;
+    el("corridorkeyLicensePage").onclick = openCorridorKeyLicense;
+    el("corridorkeyInstall").onclick = installCorridorKey;
     el("removalMethod").onchange = updateRemovalFields;
     el("outputType").onchange = function () { if (currentMode === "output") { currentView = outputView(); refreshFrame(); } };
     el("objectId").onchange = refreshFrame;
@@ -922,6 +1010,7 @@
     restoreExportDestination();
     updateRemovalFields();
     updateSam3Controls();
+    updateCorridorKeyControls();
     try {
       log("Panel initialization started; extension=" + extensionPath);
       await ensureService();
@@ -933,6 +1022,7 @@
         renderState();
       }
       await refreshSam3Status();
+      if (corridorkeySelected()) await refreshCorridorKeyStatus();
     } catch (e) { log("Panel initialization failed: " + e.stack); setStatus(e.message, "error"); }
   }
   init();
